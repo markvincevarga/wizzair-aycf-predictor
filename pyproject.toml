@@ -1,0 +1,12 @@
+[project]
+name = "wizzair-aycf-predictor"
+version = "0.1.0"
+description = "AYCF Predictor"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "cloudflare>=4.3.1",
+    "pandas>=2.3.3",
+    "requests>=2.32.5",
+    "typer>=0.20.0",
+]
