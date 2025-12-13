@@ -87,13 +87,17 @@ class Financials:
     def push_new_rows(self, df: pd.DataFrame):
         """
         Push new financials to the database.
+        Filters out existing rows based on unique key before pushing.
         
         :param df: DataFrame containing new financials.
         """
+        if df.empty:
+            return
+
         df_to_push = df.copy()
         
+        # Convert date columns to timestamps
         date_cols = ['TIME_PERIOD']
-        
         for col in date_cols:
             if col in df_to_push.columns:
                 if pd.api.types.is_datetime64_any_dtype(df_to_push[col]):
@@ -101,7 +105,41 @@ class Financials:
                 elif df_to_push[col].dtype == 'object':
                      df_to_push[col] = pd.to_datetime(df_to_push[col]).apply(lambda x: x.timestamp() if pd.notnull(x) else None)
 
-        # Use ignore_duplicates=True to skip rows that violate the unique index
+        # Pre-filter existing rows to avoid unnecessary INSERT attempts
+        if not df_to_push.empty:
+            # Check against DB
+            min_time = df_to_push['TIME_PERIOD'].min()
+            max_time = df_to_push['TIME_PERIOD'].max()
+            
+            if pd.notnull(min_time) and pd.notnull(max_time):
+                query_sql = """
+                SELECT TIME_PERIOD, REF_AREA, FREQ, EER_TYPE, EER_BASKET 
+                FROM financials 
+                WHERE TIME_PERIOD >= ? AND TIME_PERIOD <= ?
+                """
+                existing_df = self.db.query(query_sql, [str(min_time), str(max_time)])
+                
+                if not existing_df.empty:
+                    # Filter df_to_push
+                    keys_col = ['TIME_PERIOD', 'REF_AREA', 'FREQ', 'EER_TYPE', 'EER_BASKET']
+                    
+                    # Merge df_to_push with existing_df on keys
+                    # Left join, keep only those where existing is null (not found)
+                    merged = df_to_push.merge(
+                        existing_df, 
+                        on=keys_col, 
+                        how='left', 
+                        indicator=True
+                    )
+                    
+                    # Keep rows that are 'left_only'
+                    df_to_push = merged[merged['_merge'] == 'left_only'].drop(columns=['_merge'])
+                    
+        if df_to_push.empty:
+            print("All rows already exist in database. Skipping push.")
+            return
+
+        # Use ignore_duplicates=True as a fallback safety net
         self.db.push_new_rows("financials", df_to_push, ignore_duplicates=True)
 
     def remove_duplicates(self):
