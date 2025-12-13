@@ -62,7 +62,92 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
         raise TypeError("df must be a pandas DataFrame, got None")
 
     # Intentionally mutate the incoming dataframe in-place (no copies).
-    return _add_availability_date_parts(df, date_col="availability_start")
+    _add_availability_date_parts(df, date_col="availability_start")
+
+    # Lagged label features (only when `occurs` exists on the frame).
+    if "occurs" in df.columns:
+        add_lagged_occurs_feature(df, lag=1)
+        add_lagged_occurs_feature(df, lag=2)
+        add_lagged_occurs_feature(df, lag=3)
+
+    return df
+
+
+def _infer_route_group_cols(df: pd.DataFrame) -> list[str]:
+    """
+    Infer the columns that uniquely identify a route in our feature frames.
+
+    Base route key: departure_from, departure_to
+    If both country columns exist, they are included as well.
+    """
+    if df is None:
+        raise TypeError("df must be a pandas DataFrame, got None")
+
+    group_cols = ["departure_from", "departure_to"]
+    if "departure_from_country" in df.columns and "departure_to_country" in df.columns:
+        group_cols += ["departure_from_country", "departure_to_country"]
+
+    missing = [c for c in group_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"df is missing required route columns: {missing}")
+
+    return group_cols
+
+
+def add_lagged_occurs_feature(
+    df: pd.DataFrame,
+    *,
+    lag: int,
+    date_col: str = "availability_start",
+    occurs_col: str = "occurs",
+    out_col: Optional[str] = None,
+) -> pd.DataFrame:
+    """
+    Add a lagged `occurs` feature column to an existing (route x day) frame.
+
+    - Mutates `df` in-place by adding the output column.
+    - Lag is computed *within each route* after sorting by `date_col`.
+    - Requires `df` to contain `date_col` and `occurs_col`.
+
+    Args:
+        df: Existing feature dataframe.
+        lag: Number of rows (days, if the frame is daily) to lag by. Must be >= 1.
+        date_col: Date column to order by (default: availability_start).
+        occurs_col: Label/feature column to lag (default: occurs).
+        out_col: Optional override for output column name.
+                 Defaults to `f"{occurs_col}_lag_{lag}"`.
+
+    Returns:
+        The same dataframe instance, with the new column added.
+    """
+    if df is None:
+        raise TypeError("df must be a pandas DataFrame, got None")
+    if not isinstance(lag, int):
+        raise TypeError("lag must be an int")
+    if lag < 1:
+        raise ValueError("lag must be >= 1")
+
+    if date_col not in df.columns:
+        raise ValueError(f"df must contain '{date_col}'")
+    if occurs_col not in df.columns:
+        raise ValueError(f"df must contain '{occurs_col}'")
+
+    col_name = out_col or f"{occurs_col}_lag_{lag}"
+
+    group_cols = _infer_route_group_cols(df)
+
+    if df.empty:
+        df[col_name] = pd.Series(dtype="Float64")
+        return df
+
+    # Compute lag on a sorted view, then align back to original row order.
+    sort_cols = group_cols + [date_col]
+    sorted_idx = df.sort_values(by=sort_cols, ascending=True, kind="mergesort").index
+    df_sorted = df.loc[sorted_idx]
+    lagged_sorted = df_sorted.groupby(group_cols, sort=False)[occurs_col].shift(lag)
+    df[col_name] = lagged_sorted.reindex(df.index).astype("Float64")
+
+    return df
 
 
 def build_availabilities_occurs_feature(
@@ -145,17 +230,37 @@ def build_availabilities_occurs_feature_from_df(
     if availabilities is None:
         raise TypeError("availabilities must be a pandas DataFrame, got None")
 
+    # Normalize optional global start/end to plain `date` so comparisons are consistent.
+    def _parse_to_date(x: Optional[DateLike]):
+        if x is None:
+            return None
+        return pd.to_datetime(x, errors="raise").date()
+
+    window_start = _parse_to_date(start_date)
+    window_end = _parse_to_date(end_date)
+    if window_start is not None and window_end is not None and window_start > window_end:
+        raise ValueError("start_date must be <= end_date")
+
     # Positive (observed) rows: expand windows to daily `availability_start` rows and drop `availability_end`
     cleaned = datetime_columns_to_dates(remove_data_generated(availabilities))
     pos = availabilities_windows_to_daily_start(cleaned)
     pos = pos.copy()
     pos["occurs"] = 1.0
 
+    # Apply the global window to positives as well (otherwise start/end only constrain negatives).
+    if not pos.empty and "availability_start" in pos.columns:
+        if window_start is not None:
+            pos = pos[pos["availability_start"] >= window_start]
+        if window_end is not None:
+            pos = pos[pos["availability_start"] <= window_end]
+
     # Negative sampling frame (same schema as the daily positives; no availability_end)
     neg = generate_route_date_samples(
-        availabilities=pos.drop(columns=["occurs"]),
-        start_date=start_date,
-        end_date=end_date,
+        availabilities=cleaned.drop(columns=["availability_end"])
+        if "availability_end" in cleaned.columns
+        else cleaned,
+        start_date=window_start,
+        end_date=window_end,
     ).copy()
     neg["occurs"] = 0.0
 
