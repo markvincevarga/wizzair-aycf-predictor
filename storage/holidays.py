@@ -46,15 +46,11 @@ class Holidays:
     def latest_data_date(self) -> Optional[datetime]:
         """
         Get the latest startDate from the holidays table.
-        Filtering for nationwide=True (1) is implied as we only ingest nationwide,
-        but good to be explicit if table is shared.
         """
-        sql = "SELECT MAX(startDate) as latest_date FROM holidays WHERE nationwide = 1"
+        sql = "SELECT MAX(startDate) as latest_date FROM holidays"
         try:
             df = self.db.query(sql)
             if df.empty or pd.isna(df.iloc[0]['latest_date']):
-                # Fallback to any latest if no nationwide found yet?
-                # No, strict filter.
                 return None
             
             latest_val = df.iloc[0]['latest_date']

@@ -38,6 +38,12 @@ class Availabilities:
         # Index on data_generated for incremental ingestion
         index_gen_sql = "CREATE INDEX IF NOT EXISTS idx_data_generated ON availabilities(data_generated);"
         self.db.query(index_gen_sql)
+        
+        # Create unique index to prevent duplicates
+        unique_index_sql = """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_avail_unique ON availabilities(data_generated, departure_from, departure_to, availability_start, availability_end);
+        """
+        self.db.query(unique_index_sql)
 
     def availability_start_ge(self, start_date: datetime) -> pd.DataFrame:
         """
@@ -129,7 +135,7 @@ class Availabilities:
                 elif df_to_push[col].dtype == 'object':
                      df_to_push[col] = pd.to_datetime(df_to_push[col]).apply(lambda x: x.timestamp() if pd.notnull(x) else None)
 
-        self.db.push_new_rows("availabilities", df_to_push)
+        self.db.push_new_rows("availabilities", df_to_push, ignore_duplicates=True)
 
     def remove_duplicates(self):
         """

@@ -2,6 +2,7 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Optional, List
+from config import PROJECT_START_DATE
 
 BASE_URL = "https://openholidaysapi.org"
 
@@ -29,20 +30,27 @@ def get_holidays(after: Optional[datetime] = None) -> pd.DataFrame:
     
     Args:
         after (datetime, optional): Filter for holidays starting after this date.
-                                   If None, defaults to current year start.
+                                   If None, uses PROJECT_START_DATE.
     
     Returns:
         pd.DataFrame: Consolidated DataFrame of holidays.
     """
+    if after is None:
+        after = PROJECT_START_DATE
+
+    # Define the maximum future horizon we care about (e.g., 1 month from today)
+    # We don't want to infinitely fetch into the future.
+    now = datetime.now()
+    max_horizon = now + timedelta(days=30)
+    
+    # If the database is already up to date beyond our horizon, don't fetch more.
+    if after >= max_horizon:
+        print(f"Database is up to date until {after.date()}, which is beyond the fetch horizon ({max_horizon.date()}). Skipping fetch.")
+        return pd.DataFrame()
+
     # Determine date range
-    if after:
-        start_date = after.strftime("%Y-%m-%d")
-        end_dt = after + timedelta(days=730)
-        end_date = end_dt.strftime("%Y-%m-%d")
-    else:
-        now = datetime.now()
-        start_date = f"{now.year}-01-01"
-        end_date = f"{now.year + 2}-12-31"
+    start_date = after.strftime("%Y-%m-%d")
+    end_date = max_horizon.strftime("%Y-%m-%d")
 
     print(f"Fetching holidays from {start_date} to {end_date}...")
 
@@ -102,6 +110,6 @@ def get_holidays(after: Optional[datetime] = None) -> pd.DataFrame:
             df[col] = pd.to_datetime(df[col])
             
     if after and 'startDate' in df.columns:
-        df = df[df['startDate'] > after]
+        df = df[df['startDate'] >= after]
 
     return df

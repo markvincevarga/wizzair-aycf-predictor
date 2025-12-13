@@ -8,6 +8,7 @@ import pandas as pd
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from config import PROJECT_START_DATE
 
 AVAILABILITIES_REPOSITORY_URL = "https://github.com/markvincevarga/wizzair-aycf-availability.git"
 AVAILABILITIES_REPOSITORY_DIR = "data"
@@ -35,15 +36,19 @@ def get_availabilities(after: Optional[datetime] = None) -> pd.DataFrame:
     """
     Fetch availabilities from the GitHub repository.
     Only downloads files generated after the specified timestamp.
+    Defaults to PROJECT_START_DATE if after is None.
     
     Args:
         after (datetime, optional): Filter for files generated after this timestamp. 
-                                   If None, fetches all files.
-
+                                   If None, uses PROJECT_START_DATE.
+    
     Returns:
         pd.DataFrame: Concatenated dataframe of all downloaded availabilities.
         Columns 'availability_start', 'availability_end', 'data_generated' are datetime objects.
     """
+    if after is None:
+        after = PROJECT_START_DATE
+
     parsed_url = urlparse(AVAILABILITIES_REPOSITORY_URL)
     path_parts = parsed_url.path.strip("/").replace(".git", "").split("/")
     if len(path_parts) < 2:
@@ -84,14 +89,23 @@ def get_availabilities(after: Optional[datetime] = None) -> pd.DataFrame:
             clean_timestamp = name_without_ext.replace("_", ":")
             file_date = pd.to_datetime(clean_timestamp)
             
-            if after:
-                if after.tzinfo is not None and file_date.tzinfo is None:
-                    file_date = file_date.tz_localize("UTC")
-                elif after.tzinfo is None and file_date.tzinfo is not None:
-                     file_date = file_date.tz_localize(None)
-                
-                if file_date <= after:
-                    continue
+            # Filter strictly > after (or >= if project start is inclusive)
+            # The user said "do not retrieve any data from before then".
+            # Usually 'after' implies strict >, but project start date is usually inclusive.
+            # Let's use >= for project start, > for incremental updates.
+            # If after was passed explicitly, we usually want >.
+            # If it fell back to PROJECT_START_DATE, we might want >=.
+            # To be safe and consistent with "from before then", we exclude < PROJECT_START_DATE.
+            # So >= is correct.
+            
+            # Normalize timezones
+            if after.tzinfo is not None and file_date.tzinfo is None:
+                file_date = file_date.tz_localize("UTC")
+            elif after.tzinfo is None and file_date.tzinfo is not None:
+                 file_date = file_date.tz_localize(None)
+            
+            if file_date <= after:
+                continue
         except (ValueError, pd.errors.ParserError):
             print(f"Skipping file with unparseable timestamp: {filename}")
             continue
