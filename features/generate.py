@@ -17,6 +17,60 @@ class RouteWindow:
     last_date: date
 
 
+def generate_timespan_route_availabilities(
+    routes: pd.DataFrame,
+    start_date: DateLike,
+    end_date: DateLike,
+) -> pd.DataFrame:
+    """
+    Generate the full (routes x day) grid for a fixed timespan.
+
+    Inputs:
+    - `routes`: dataframe containing at least `departure_from`, `departure_to`, and optionally
+      `departure_from_country`, `departure_to_country`.
+    - `start_date`, `end_date`: inclusive bounds.
+
+    Output schema matches the per-day generator format used elsewhere:
+    - departure_from, departure_to, availability_start
+    - plus country columns if provided on `routes`
+    - never includes `availability_end`
+    """
+    if routes is None:
+        raise TypeError("routes must be a pandas DataFrame, got None")
+
+    if routes.empty:
+        out = routes.copy()
+        if "availability_start" not in out.columns:
+            out["availability_start"] = pd.Series(dtype="object")
+        return out
+
+    required = {"departure_from", "departure_to"}
+    missing = required - set(routes.columns)
+    if missing:
+        raise ValueError(f"routes is missing required columns: {sorted(missing)}")
+
+    s = pd.to_datetime(start_date, errors="raise").date()
+    e = pd.to_datetime(end_date, errors="raise").date()
+    if s > e:
+        raise ValueError("start_date must be <= end_date")
+
+    dates = pd.DataFrame({"availability_start": pd.date_range(s, e, freq="D").date})
+
+    route_cols = ["departure_from", "departure_to"]
+    if "departure_from_country" in routes.columns and "departure_to_country" in routes.columns:
+        route_cols += ["departure_from_country", "departure_to_country"]
+
+    # unique + stable
+    r0 = routes[route_cols].drop_duplicates().reset_index(drop=True)
+
+    # Cross join (compatible with older pandas)
+    r0["_key"] = 1
+    dates["_key"] = 1
+    out = r0.merge(dates, on="_key", how="inner").drop(columns=["_key"])
+
+    return out
+
+
 def generate_route_date_samples(
     availabilities: pd.DataFrame,
     start_date: Optional[DateLike] = None,

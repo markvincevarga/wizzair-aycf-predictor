@@ -213,6 +213,18 @@ class Availabilities:
     def __init__(self, db: DatabaseWrapper):
         self.db = db
 
+    @property
+    def routes(self) -> pd.DataFrame:
+        """
+        Distinct route list currently present in the database.
+
+        Returns a dataframe with:
+        - departure_from, departure_to
+        - departure_from_country, departure_to_country
+        """
+        df = self.db.query("SELECT DISTINCT departure_from, departure_to FROM availabilities")
+        return _add_country_codes_columns(df)
+
     def create_table(self):
         """
         Create the availabilities table and indexes if they do not exist.
