@@ -15,6 +15,56 @@ from features.mapping import (
 from storage.availabilities import Availabilities
 
 
+def _add_availability_date_parts(
+    df: pd.DataFrame,
+    *,
+    date_col: str = "availability_start",
+) -> pd.DataFrame:
+    """
+    Add calendar-derived features from the per-day availability date column.
+
+    Adds:
+    - day_of_week: Monday=0 ... Sunday=6
+    - week_of_year: ISO week number (1..53)
+    - month_of_year: month number (1..12)
+    """
+    if df is None:
+        raise TypeError("df must be a pandas DataFrame, got None")
+
+    # Intentionally mutate the incoming dataframe in-place (no copies).
+    if date_col not in df.columns:
+        raise ValueError(f"df must contain '{date_col}'")
+
+    # Ensure columns exist (even for empty frames) with a nullable integer dtype.
+    if df.empty:
+        df["day_of_week"] = pd.Series(dtype="Int64")
+        df["week_of_year"] = pd.Series(dtype="Int64")
+        df["month_of_year"] = pd.Series(dtype="Int64")
+        return df
+
+    s = pd.to_datetime(df[date_col], errors="coerce")
+    df["day_of_week"] = s.dt.dayofweek.astype("Int64")
+    df["week_of_year"] = s.dt.isocalendar().week.astype("Int64")
+    df["month_of_year"] = s.dt.month.astype("Int64")
+
+    return df
+
+
+def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add derived feature columns to an existing availabilities feature frame.
+
+    This is intended to be called *after* building the base labeled frame
+    (e.g. from `build_availabilities_occurs_feature_from_df`), so it can be reused
+    consistently across training and prediction pipelines.
+    """
+    if df is None:
+        raise TypeError("df must be a pandas DataFrame, got None")
+
+    # Intentionally mutate the incoming dataframe in-place (no copies).
+    return _add_availability_date_parts(df, date_col="availability_start")
+
+
 def build_availabilities_occurs_feature(
     db: DatabaseWrapper,
     *,
@@ -115,7 +165,7 @@ def build_availabilities_occurs_feature_from_df(
     if combined.empty:
         # Ensure `occurs` exists and is float even for empty frames.
         combined["occurs"] = combined.get("occurs", pd.Series(dtype="float")).astype(float)
-        return combined
+        return add_derived_features(combined)
 
     # Prefer occurs=1.0 when a sampled row collides with an observed row.
     combined["occurs"] = combined["occurs"].astype(float)
@@ -131,5 +181,5 @@ def build_availabilities_occurs_feature_from_df(
 
     combined = combined.drop_duplicates(subset=dedupe_subset, keep="first").reset_index(drop=True)
 
-    return combined
+    return add_derived_features(combined)
 
