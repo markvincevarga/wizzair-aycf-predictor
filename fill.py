@@ -138,14 +138,6 @@ def update_financials(db: DatabaseWrapper, force_backfill: bool = False, ensure_
     except Exception as e:
         print(f"Error fetching/pushing financials: {e}")
 
-def update_holidays(*args, **kwargs):
-    """
-    Holidays are no longer stored in the database.
-    We generate them on-the-fly via python-holidays in the training pipeline.
-    """
-    print("\n--- Updating Holidays ---")
-    print("Skipped: holidays are generated on-the-fly (python-holidays), not stored in DB.")
-
 @app.command()
 def fill(
     db_name: str = typer.Option(..., "--db", help="The name of the D1 database to connect to."),
@@ -166,7 +158,6 @@ def fill(
 
     update_availabilities(db, force_backfill, ensure_tables)
     update_financials(db, force_backfill, ensure_tables)
-    update_holidays(db, force_backfill, ensure_tables)
     
     print("\n--- Update Completed ---")
 

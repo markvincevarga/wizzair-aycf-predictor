@@ -205,37 +205,6 @@ def add_rolling_occurs_mean_feature(
     return df
 
 
-def build_availabilities_occurs_feature(
-    db: DatabaseWrapper,
-    *,
-    include_country_codes: bool = True,
-    start_date: Optional[DateLike] = None,
-    end_date: Optional[DateLike] = None,
-) -> pd.DataFrame:
-    """
-    Build a labeled (route x date) feature frame for AYCF availability occurrence.
-
-    Steps:
-    - Load availabilities from the database.
-    - Drop the ingestion timestamp column (`data_generated`) and convert datetime columns to `date`.
-    - Label observed availabilities with `occurs = 1.0`.
-    - Generate a negative frame from the same routes/dates (full daily grid),
-      and label those with `occurs = 0.0`.
-    - Concatenate and de-duplicate, keeping `occurs = 1.0` when both exist for the same row.
-
-    Notes:
-    - De-duplication intentionally ignores `id` (and `occurs`) so that sampled rows can be
-      matched against observed rows.
-    """
-    domain = Availabilities(db)
-    raw = domain.get_all(include_country_codes=include_country_codes)
-    return build_availabilities_occurs_feature_from_df(
-        raw,
-        start_date=start_date,
-        end_date=end_date,
-    )
-
-
 def sort_availabilities_occurs_feature(df: pd.DataFrame) -> pd.DataFrame:
     """
     Sort a labeled availabilities feature frame by route then date.
@@ -264,6 +233,28 @@ def sort_availabilities_occurs_feature(df: pd.DataFrame) -> pd.DataFrame:
 
     return df.sort_values(by=sort_cols, ascending=True, kind="mergesort").reset_index(
         drop=True
+    )
+
+
+def build_availabilities_occurs_feature(
+    db: DatabaseWrapper,
+    *,
+    include_country_codes: bool = True,
+    start_date: Optional[DateLike] = None,
+    end_date: Optional[DateLike] = None,
+) -> pd.DataFrame:
+    """
+    Build a labeled (route x date) feature frame for AYCF availability occurrence.
+
+    Loads availabilities from the database, builds the labeled per-day frame, and then
+    applies derived features.
+    """
+    domain = Availabilities(db)
+    raw = domain.get_all(include_country_codes=include_country_codes)
+    return build_availabilities_occurs_feature_from_df(
+        raw,
+        start_date=start_date,
+        end_date=end_date,
     )
 
 
