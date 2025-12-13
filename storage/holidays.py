@@ -46,11 +46,15 @@ class Holidays:
     def latest_data_date(self) -> Optional[datetime]:
         """
         Get the latest startDate from the holidays table.
+        Filtering for nationwide=True (1) is implied as we only ingest nationwide,
+        but good to be explicit if table is shared.
         """
-        sql = "SELECT MAX(startDate) as latest_date FROM holidays"
+        sql = "SELECT MAX(startDate) as latest_date FROM holidays WHERE nationwide = 1"
         try:
             df = self.db.query(sql)
             if df.empty or pd.isna(df.iloc[0]['latest_date']):
+                # Fallback to any latest if no nationwide found yet?
+                # No, strict filter.
                 return None
             
             latest_val = df.iloc[0]['latest_date']
@@ -70,29 +74,23 @@ class Holidays:
         """
         df_to_push = df.copy()
         
+        # Ensure only nationwide rows are pushed (double safety)
+        if 'nationwide' in df_to_push.columns:
+            df_to_push = df_to_push[df_to_push['nationwide'] == True]
+        
         date_cols = ['startDate', 'endDate']
         for col in date_cols:
             if col in df_to_push.columns:
                 if pd.api.types.is_datetime64_any_dtype(df_to_push[col]):
                     df_to_push[col] = df_to_push[col].apply(lambda x: x.timestamp() if pd.notnull(x) else None)
         
-        # Filter columns to match schema
         schema_cols = ['id', 'countryIsoCode', 'startDate', 'endDate', 'category', 'name_text', 'regionalScope', 'temporalScope', 'nationwide']
         
-        # Ensure only relevant columns are present
         cols_to_keep = [c for c in schema_cols if c in df_to_push.columns]
         df_to_push = df_to_push[cols_to_keep]
-        
-        # Using INSERT OR REPLACE because ID is primary key and stable from API
-        # But DatabaseWrapper.push_new_rows uses "INSERT INTO" or "INSERT OR IGNORE"
-        # Since we want to update if details changed (unlikely for past, but maybe future), REPLACE is better.
-        # However, DatabaseWrapper doesn't support REPLACE yet.
-        # "ignore_duplicates=True" does INSERT OR IGNORE.
-        # Let's assume ID collisions mean same holiday, so IGNORE is fine.
         
         self.db.push_new_rows("holidays", df_to_push, ignore_duplicates=True)
 
     def remove_duplicates(self):
         # API ID is primary key, so duplicates are handled by constraint.
-        # But if we want to clean up manually just in case schema was loose before:
         pass

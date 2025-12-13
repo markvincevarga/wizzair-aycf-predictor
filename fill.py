@@ -5,11 +5,11 @@ import typer
 sys.path.append(os.getcwd())
 
 from database import DatabaseWrapper
-from domain.availabilities import Availabilities
+from storage.availabilities import Availabilities
 from source.availabilities import get_availabilities
-from domain.financials import Financials
+from storage.financials import Financials
 from source.financials import get_financials
-from domain.holidays import Holidays
+from storage.holidays import Holidays
 from source.holidays import get_holidays
 
 app = typer.Typer()

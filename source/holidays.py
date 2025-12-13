@@ -25,6 +25,7 @@ def _fetch_data(endpoint: str, country_code: str, start_date: str, end_date: str
 def get_holidays(after: Optional[datetime] = None) -> pd.DataFrame:
     """
     Fetch Public and School holidays for all supported countries.
+    Filters for nationwide holidays only.
     
     Args:
         after (datetime, optional): Filter for holidays starting after this date.
@@ -36,13 +37,9 @@ def get_holidays(after: Optional[datetime] = None) -> pd.DataFrame:
     # Determine date range
     if after:
         start_date = after.strftime("%Y-%m-%d")
-        # Fetch up to 2 years in advance? Or just 1 year?
-        # Availabilities go up to Dec 2025. 
-        # Let's fetch 2 years from start date to be safe.
         end_dt = after + timedelta(days=730)
         end_date = end_dt.strftime("%Y-%m-%d")
     else:
-        # Default to start of current year
         now = datetime.now()
         start_date = f"{now.year}-01-01"
         end_date = f"{now.year + 2}-12-31"
@@ -67,16 +64,20 @@ def get_holidays(after: Optional[datetime] = None) -> pd.DataFrame:
         # Public Holidays
         ph_data = _fetch_data("PublicHolidays", iso, start_date, end_date)
         for item in ph_data:
-            item['countryIsoCode'] = iso
-            item['category'] = 'Public'
-            all_holidays.append(item)
+            # Filter for nationwide
+            if item.get('nationwide', False):
+                item['countryIsoCode'] = iso
+                item['category'] = 'Public'
+                all_holidays.append(item)
             
         # School Holidays
         sh_data = _fetch_data("SchoolHolidays", iso, start_date, end_date)
         for item in sh_data:
-            item['countryIsoCode'] = iso
-            item['category'] = 'School'
-            all_holidays.append(item)
+            # Filter for nationwide
+            if item.get('nationwide', False):
+                item['countryIsoCode'] = iso
+                item['category'] = 'School'
+                all_holidays.append(item)
 
     if not all_holidays:
         return pd.DataFrame()
@@ -84,16 +85,12 @@ def get_holidays(after: Optional[datetime] = None) -> pd.DataFrame:
     df = pd.DataFrame(all_holidays)
     
     # Normalize columns
-    # API returns: id, startDate, endDate, type, name (list of dicts), regionalScope, etc.
-    # We want to extract English name if possible.
-    
     def get_name(name_list):
         if not isinstance(name_list, list):
             return str(name_list)
         for n in name_list:
             if n.get('language') == 'EN':
                 return n.get('text')
-        # Fallback to first
         return name_list[0].get('text') if name_list else None
 
     if 'name' in df.columns:
@@ -104,9 +101,7 @@ def get_holidays(after: Optional[datetime] = None) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col])
             
-    # Filter strictly by 'after' if needed (API is validFrom/To inclusive)
     if after and 'startDate' in df.columns:
         df = df[df['startDate'] > after]
 
     return df
-
