@@ -88,5 +88,23 @@ class Holidays:
         self.db.push_new_rows("holidays", df_to_push, ignore_duplicates=True)
 
     def remove_duplicates(self):
-        # API ID is primary key, so duplicates are handled by constraint.
-        pass
+        """
+        Remove duplicate rows from the holidays table based on content.
+        Rows are considered duplicates if they have the same:
+        - countryIsoCode
+        - startDate
+        - endDate
+        - category
+        - name_text
+        
+        Keeps one arbitrary row (min(id)) for each group.
+        """
+        sql = """
+        DELETE FROM holidays
+        WHERE id NOT IN (
+            SELECT MIN(id)
+            FROM holidays
+            GROUP BY countryIsoCode, startDate, endDate, category, name_text
+        )
+        """
+        self.db.query(sql)
