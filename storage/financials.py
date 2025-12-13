@@ -55,6 +55,22 @@ class Financials:
         """
         self.db.query(unique_index_sql)
 
+    def get_all(self) -> pd.DataFrame:
+        """
+        Get all financials data from the database.
+        
+        :return: DataFrame containing all financials with correct datetime types.
+        """
+        sql = "SELECT * FROM financials"
+        df = self.db.query(sql)
+        
+        date_cols = ['TIME_PERIOD']
+        for col in date_cols:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], unit='s')
+        
+        return df
+
     def latest_data_date(self) -> Optional[datetime]:
         """
         Get the latest date from the financials table (TIME_PERIOD).

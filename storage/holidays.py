@@ -43,6 +43,22 @@ class Holidays:
         index_country = "CREATE INDEX IF NOT EXISTS idx_holidays_country ON holidays(countryIsoCode);"
         self.db.query(index_country)
 
+    def get_all(self) -> pd.DataFrame:
+        """
+        Get all holidays from the database.
+        
+        :return: DataFrame containing all holidays with correct datetime types.
+        """
+        sql = "SELECT * FROM holidays"
+        df = self.db.query(sql)
+        
+        date_cols = ['startDate', 'endDate']
+        for col in date_cols:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], unit='s')
+        
+        return df
+
     def latest_data_date(self) -> Optional[datetime]:
         """
         Get the latest startDate from the holidays table.

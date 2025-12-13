@@ -3,6 +3,212 @@ import pandas as pd
 from datetime import datetime
 from database import DatabaseWrapper
 
+CITY_TO_COUNTRY_ISO: dict[str, str] = {
+    "Aalesund": "NO",
+    "Aberdeen": "GB",
+    "Abu Dhabi": "AE",
+    "Agadir": "MA",
+    "Alexandria": "EG",
+    "Alghero": "IT",
+    "Alicante": "ES",
+    "Almaty": "KZ",
+    "Amman": "JO",
+    "Ancona": "IT",
+    "Antalya": "TR",
+    "Asyut": "EG",
+    "Athens": "GR",
+    "Bacau": "RO",
+    "Baku": "AZ",
+    "Banja Luka": "BA",
+    "Barcelona": "ES",
+    "Bari": "IT",
+    "Basel/Mulhouse": "FR",  # Airport is physically in France
+    "Beirut": "LB",
+    "Belgrade": "RS",
+    "Bergen": "NO",
+    "Berlin": "DE",
+    "Bilbao": "ES",
+    "Billund": "DK",
+    "Birmingham": "GB",
+    "Bishkek": "KG",
+    "Bologna": "IT",
+    "Bordeaux": "FR",
+    "Brasov": "RO",
+    "Bratislava": "SK",
+    "Brussels": "BE",
+    "Bucharest": "RO",
+    "Budapest": "HU",
+    "Burgas": "BG",
+    "Castellon": "ES",
+    "Catania": "IT",
+    "Chania": "GR",
+    "Chisinau": "MD",
+    "Cluj": "RO",
+    "Cologne/Bonn": "DE",
+    "Comiso": "IT",
+    "Constanta": "RO",
+    "Copenhagen": "DK",
+    "Craiova": "RO",
+    "Dalaman": "TR",
+    "Dammam": "SA",
+    "Debrecen": "HU",
+    "Dortmund": "DE",
+    "Dubai": "AE",
+    "Dubrovnik": "HR",
+    "Eindhoven": "NL",
+    "Faro": "PT",
+    "Frankfurt": "DE",
+    "Friedrichshafen": "DE",
+    "Fuerteventura": "ES",
+    "Gabala": "AZ",
+    "Gdansk": "PL",
+    "Genoa": "IT",
+    "Girona": "ES",
+    "Giza": "EG",
+    "Glasgow": "GB",
+    "Gothenburg": "SE",
+    "Gran Canaria": "ES",
+    "Gyumri": "AM",
+    "Hamburg": "DE",
+    "Haugesund": "NO",
+    "Heraklion": "GR",
+    "Hurghada": "EG",
+    "Iasi": "RO",
+    "Ibiza": "ES",
+    "Istanbul": "TR",
+    "Jeddah": "SA",
+    "Karlsruhe/Baden-Baden": "DE",
+    "Katowice": "PL",
+    "Kaunas": "LT",
+    "Kerkyra": "GR",
+    "Klaipeda/Palanga": "LT",
+    "Kosice": "SK",
+    "Krakow": "PL",
+    "Kutaisi": "GE",
+    "Lamezia Terme": "IT",
+    "Larnaca": "CY",
+    "Leeds/Bradford": "GB",
+    "Leipzig/Halle": "DE",
+    "Lisbon": "PT",
+    "Liverpool": "GB",
+    "Ljubljana": "SI",
+    "London": "GB",
+    "Lublin": "PL",
+    "Lyon": "FR",
+    "Maastricht": "NL",
+    "Madeira": "PT",
+    "Madinah": "SA",
+    "Madrid": "ES",
+    "Malaga": "ES",
+    "Male": "MV",
+    "Malmo": "SE",
+    "Malta": "MT",
+    "Marrakech": "MA",
+    "Marsa Alam": "EG",
+    "Memmingen": "DE",
+    "Milan": "IT",
+    "Mykonos": "GR",
+    "Naples": "IT",
+    "Nice": "FR",
+    "Nis": "RS",
+    "Nur-Sultan": "KZ",
+    "Nuremberg": "DE",
+    "Ohrid": "MK",
+    "Olbia": "IT",
+    "Oslo": "NO",
+    "Palma De Mallorca": "ES",
+    "Paphos": "CY",
+    "Paris": "FR",
+    "Perugia": "IT",
+    "Pescara": "IT",
+    "Pisa": "IT",
+    "Plovdiv": "BG",
+    "Podgorica": "ME",
+    "Poprad/Tatry": "SK",
+    "Porto": "PT",
+    "Poznan": "PL",
+    "Prague": "CZ",
+    "Pristina": "XK",  # Temporary country code for Kosovo used by most aviation data
+    "Radom": "PL",
+    "Reykjavik": "IS",
+    "Rhodes": "GR",
+    "Riga": "LV",
+    "Rimini": "IT",
+    "Riyadh": "SA",
+    "Rome": "IT",
+    "Rzeszow": "PL",
+    "Salalah": "OM",
+    "Salerno": "IT",
+    "Salzburg": "AT",
+    "Samarkand": "UZ",
+    "Santander": "ES",
+    "Santorini": "GR",
+    "Sarajevo": "BA",
+    "Satu Mare": "RO",
+    "Sevilla": "ES",
+    "Sharm el-Sheikh": "EG",
+    "Sibiu": "RO",
+    "Skiathos": "GR",
+    "Skopje": "MK",
+    "Sofia": "BG",
+    "Sohag": "EG",
+    "Split": "HR",
+    "Stavanger": "NO",
+    "Stockholm": "SE",
+    "Stuttgart": "DE",
+    "Suceava": "RO",
+    "Szczecin": "PL",
+    "Szczytno": "PL",
+    "Tallinn": "EE",
+    "Targu-Mures": "RO",
+    "Tashkent": "UZ",
+    "Tel Aviv": "IL",
+    "Tenerife": "ES",
+    "Thessaloniki": "GR",
+    "Timisoara": "RO",
+    "Tirana": "AL",
+    "Trieste": "IT",
+    "Tromso": "NO",
+    "Trondheim": "NO",
+    "Turin": "IT",
+    "Turkistan": "KZ",
+    "Turku": "FI",
+    "Tuzla": "BA",
+    "Valencia": "ES",
+    "Varna": "BG",
+    "Venice": "IT",
+    "Verona": "IT",
+    "Vienna": "AT",
+    "Vilnius": "LT",
+    "Warsaw": "PL",
+    "Wroclaw": "PL",
+    "Yerevan": "AM",
+    "Zakinthos Island": "GR",
+    "Zaragoza": "ES",
+}
+
+
+def _add_country_codes_columns(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    if df.empty:
+        df["departure_from_country"] = pd.Series(dtype="string")
+        df["departure_to_country"] = pd.Series(dtype="string")
+        return df
+
+    mapping: dict[str, str] = {}
+    mapping.update({k.strip(): v for k, v in CITY_TO_COUNTRY_ISO.items()})
+
+    if "departure_from" in df.columns:
+        s_from = df["departure_from"].astype("string").str.strip()
+        df["departure_from_country"] = s_from.map(mapping)
+
+    if "departure_to" in df.columns:
+        s_to = df["departure_to"].astype("string").str.strip()
+        df["departure_to_country"] = s_to.map(mapping)
+
+    return df
+
 class Availabilities:
     def __init__(self, db: DatabaseWrapper):
         self.db = db
@@ -45,7 +251,32 @@ class Availabilities:
         """
         self.db.query(unique_index_sql)
 
-    def availability_start_ge(self, start_date: datetime) -> pd.DataFrame:
+    def get_all(
+        self,
+        include_country_codes: bool = False,
+    ) -> pd.DataFrame:
+        """
+        Get all availabilities from the database.
+        
+        :return: DataFrame containing all availabilities with correct datetime types.
+        """
+        sql = "SELECT * FROM availabilities"
+        df = self.db.query(sql)
+        
+        for col in ['availability_start', 'availability_end', 'data_generated']:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], unit='s')
+
+        if include_country_codes:
+            df = _add_country_codes_columns(df)
+
+        return df
+
+    def availability_start_ge(
+        self,
+        start_date: datetime,
+        include_country_codes: bool = False,
+    ) -> pd.DataFrame:
         """
         Get availabilities starting on or after the given date.
         
@@ -60,7 +291,10 @@ class Availabilities:
         for col in ['availability_start', 'availability_end', 'data_generated']:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], unit='s')
-        
+
+        if include_country_codes:
+            df = _add_country_codes_columns(df)
+
         return df
 
     def latest_data_generated(self) -> Optional[datetime]:
