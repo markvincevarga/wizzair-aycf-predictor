@@ -69,6 +69,8 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
         add_lagged_occurs_feature(df, lag=1)
         add_lagged_occurs_feature(df, lag=2)
         add_lagged_occurs_feature(df, lag=3)
+        add_rolling_occurs_mean_feature(df, window_days=7)
+        add_rolling_occurs_mean_feature(df, window_days=14)
 
     return df
 
@@ -147,6 +149,59 @@ def add_lagged_occurs_feature(
     lagged_sorted = df_sorted.groupby(group_cols, sort=False)[occurs_col].shift(lag)
     df[col_name] = lagged_sorted.reindex(df.index).astype("Float64")
 
+    return df
+
+
+def add_rolling_occurs_mean_feature(
+    df: pd.DataFrame,
+    *,
+    window_days: int,
+    date_col: str = "availability_start",
+    occurs_col: str = "occurs",
+    out_col: Optional[str] = None,
+    min_periods: int = 1,
+) -> pd.DataFrame:
+    """
+    Add a per-route rolling mean of `occurs` over the previous `window_days` days.
+
+    - Mutates `df` in-place by adding the output column.
+    - Computed within each route after sorting by `date_col`.
+    - Excludes the current day by shifting by 1 before rolling.
+
+    Output column default: `f"{occurs_col}_mean_prev_{window_days}d"`.
+    """
+    if df is None:
+        raise TypeError("df must be a pandas DataFrame, got None")
+    if not isinstance(window_days, int):
+        raise TypeError("window_days must be an int")
+    if window_days < 1:
+        raise ValueError("window_days must be >= 1")
+    if not isinstance(min_periods, int):
+        raise TypeError("min_periods must be an int")
+    if min_periods < 1:
+        raise ValueError("min_periods must be >= 1")
+
+    if date_col not in df.columns:
+        raise ValueError(f"df must contain '{date_col}'")
+    if occurs_col not in df.columns:
+        raise ValueError(f"df must contain '{occurs_col}'")
+
+    col_name = out_col or f"{occurs_col}_mean_prev_{window_days}d"
+    group_cols = _infer_route_group_cols(df)
+
+    if df.empty:
+        df[col_name] = pd.Series(dtype="Float64")
+        return df
+
+    sort_cols = group_cols + [date_col]
+    sorted_idx = df.sort_values(by=sort_cols, ascending=True, kind="mergesort").index
+    df_sorted = df.loc[sorted_idx]
+
+    rolling_sorted = df_sorted.groupby(group_cols, sort=False, group_keys=False)[
+        occurs_col
+    ].apply(lambda s: s.shift(1).rolling(window=window_days, min_periods=min_periods).mean())
+
+    df[col_name] = rolling_sorted.reindex(df.index).astype("Float64")
     return df
 
 
