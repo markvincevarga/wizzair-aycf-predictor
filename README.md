@@ -11,7 +11,7 @@ From the All You Can Fly **FAQ**:
 ## Data Sources
 
 - [wizzair-aycf-availability](https://github.com/markvincevarga/wizzair-aycf-availability/) Daily availability of WizzAir All You Can Fly deal flight tickets. This is the basis of our data. Made by Márk.
-- [OpenHolidays API](https://www.openholidaysapi.org/) To determine how close the specific flight is to the next/previous holiday in either country. People fly more around holidays, so we think that fewer AYCF tickets will be available close to holidays.
+- Holidays: generated on-the-fly via the `holidays` (python-holidays) library to determine how close the specific flight is to the next/previous national holiday in either country. (Kosovo `XK` is filled with a small fixed-date holiday list.)
 - Broad basket NEER (Nominal Effective Exchange Rate) data: relative value change of different currencies daily from [BIS Data Portal](https://data.bis.org/). NEER data of the currency related to a departure or destination country is correlated with the strength of a certain currency. We think that when their home currency is strong, people are more likely to travel abroad, thereby reducing the number of available AYCF tickets.
 
 ## Architecture
@@ -40,6 +40,7 @@ uv run fill.py --db wizz
 ```
 
 **Train** uses all the available data in the database to train the model.
+Holidays are not stored in the database; they are generated at training time.
 
 ```bash
 uv run train.py --db wizz

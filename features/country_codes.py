@@ -1,0 +1,216 @@
+from __future__ import annotations
+
+import pandas as pd
+
+
+# City -> ISO2 country code mapping used in the upstream availabilities dataset.
+# (Copied from the previous DB storage layer; now used directly in feature building.)
+CITY_TO_COUNTRY_ISO: dict[str, str] = {
+    "Aalesund": "NO",
+    "Aberdeen": "GB",
+    "Abu Dhabi": "AE",
+    "Agadir": "MA",
+    "Alexandria": "EG",
+    "Alghero": "IT",
+    "Alicante": "ES",
+    "Almaty": "KZ",
+    "Amman": "JO",
+    "Ancona": "IT",
+    "Antalya": "TR",
+    "Asyut": "EG",
+    "Athens": "GR",
+    "Bacau": "RO",
+    "Baku": "AZ",
+    "Banja Luka": "BA",
+    "Barcelona": "ES",
+    "Bari": "IT",
+    "Basel/Mulhouse": "FR",  # Airport is physically in France
+    "Beirut": "LB",
+    "Belgrade": "RS",
+    "Bergen": "NO",
+    "Berlin": "DE",
+    "Bilbao": "ES",
+    "Billund": "DK",
+    "Birmingham": "GB",
+    "Bishkek": "KG",
+    "Bologna": "IT",
+    "Bordeaux": "FR",
+    "Brasov": "RO",
+    "Bratislava": "SK",
+    "Brussels": "BE",
+    "Bucharest": "RO",
+    "Budapest": "HU",
+    "Burgas": "BG",
+    "Castellon": "ES",
+    "Catania": "IT",
+    "Chania": "GR",
+    "Chisinau": "MD",
+    "Cluj": "RO",
+    "Cologne/Bonn": "DE",
+    "Comiso": "IT",
+    "Constanta": "RO",
+    "Copenhagen": "DK",
+    "Craiova": "RO",
+    "Dalaman": "TR",
+    "Dammam": "SA",
+    "Debrecen": "HU",
+    "Dortmund": "DE",
+    "Dubai": "AE",
+    "Dubrovnik": "HR",
+    "Eindhoven": "NL",
+    "Faro": "PT",
+    "Frankfurt": "DE",
+    "Friedrichshafen": "DE",
+    "Fuerteventura": "ES",
+    "Gabala": "AZ",
+    "Gdansk": "PL",
+    "Genoa": "IT",
+    "Girona": "ES",
+    "Giza": "EG",
+    "Glasgow": "GB",
+    "Gothenburg": "SE",
+    "Gran Canaria": "ES",
+    "Gyumri": "AM",
+    "Hamburg": "DE",
+    "Haugesund": "NO",
+    "Heraklion": "GR",
+    "Hurghada": "EG",
+    "Iasi": "RO",
+    "Ibiza": "ES",
+    "Istanbul": "TR",
+    "Jeddah": "SA",
+    "Karlsruhe/Baden-Baden": "DE",
+    "Katowice": "PL",
+    "Kaunas": "LT",
+    "Kerkyra": "GR",
+    "Klaipeda/Palanga": "LT",
+    "Kosice": "SK",
+    "Krakow": "PL",
+    "Kutaisi": "GE",
+    "Lamezia Terme": "IT",
+    "Larnaca": "CY",
+    "Leeds/Bradford": "GB",
+    "Leipzig/Halle": "DE",
+    "Lisbon": "PT",
+    "Liverpool": "GB",
+    "Ljubljana": "SI",
+    "London": "GB",
+    "Lublin": "PL",
+    "Lyon": "FR",
+    "Maastricht": "NL",
+    "Madeira": "PT",
+    "Madinah": "SA",
+    "Madrid": "ES",
+    "Malaga": "ES",
+    "Male": "MV",
+    "Malmo": "SE",
+    "Malta": "MT",
+    "Marrakech": "MA",
+    "Marsa Alam": "EG",
+    "Memmingen": "DE",
+    "Milan": "IT",
+    "Mykonos": "GR",
+    "Naples": "IT",
+    "Nice": "FR",
+    "Nis": "RS",
+    "Nuremberg": "DE",
+    "Ohrid": "MK",
+    "Olbia": "IT",
+    "Oslo": "NO",
+    "Palma De Mallorca": "ES",
+    "Paris": "FR",
+    "Perugia": "IT",
+    "Pescara": "IT",
+    "Pisa": "IT",
+    "Plovdiv": "BG",
+    "Podgorica": "ME",
+    "Porto": "PT",
+    "Poznan": "PL",
+    "Prague": "CZ",
+    "Pristina": "XK",
+    "Reykjavik": "IS",
+    "Rhodes": "GR",
+    "Riga": "LV",
+    "Rimini": "IT",
+    "Riyadh": "SA",
+    "Rome": "IT",
+    "Rzeszow": "PL",
+    "Salalah": "OM",
+    "Salerno": "IT",
+    "Salzburg": "AT",
+    "Santander": "ES",
+    "Santorini": "GR",
+    "Sarajevo": "BA",
+    "Satu Mare": "RO",
+    "Sevilla": "ES",
+    "Sharm el-Sheikh": "EG",
+    "Sibiu": "RO",
+    "Skiathos": "GR",
+    "Skopje": "MK",
+    "Sofia": "BG",
+    "Sohag": "EG",
+    "Split": "HR",
+    "Stavanger": "NO",
+    "Stockholm": "SE",
+    "Stuttgart": "DE",
+    "Suceava": "RO",
+    "Tallinn": "EE",
+    "Targu-Mures": "RO",
+    "Tel Aviv": "IL",
+    "Tenerife": "ES",
+    "Thessaloniki": "GR",
+    "Timisoara": "RO",
+    "Tirana": "AL",
+    "Tromso": "NO",
+    "Turin": "IT",
+    "Turkistan": "KZ",
+    "Tuzla": "BA",
+    "Valencia": "ES",
+    "Varna": "BG",
+    "Venice": "IT",
+    "Verona": "IT",
+    "Vienna": "AT",
+    "Vilnius": "LT",
+    "Warsaw": "PL",
+    "Wroclaw": "PL",
+    "Yerevan": "AM",
+    "Zakinthos Island": "GR",
+}
+
+
+def add_country_codes_columns(
+    df: pd.DataFrame,
+    *,
+    from_city_col: str = "departure_from",
+    to_city_col: str = "departure_to",
+    out_from_country_col: str = "departure_from_country",
+    out_to_country_col: str = "departure_to_country",
+) -> pd.DataFrame:
+    """
+    Add ISO2 country codes for departure/destination cities (in-place).
+    """
+    if df is None:
+        raise TypeError("df must be a pandas DataFrame, got None")
+
+    if df.empty:
+        df[out_from_country_col] = pd.Series(dtype="string")
+        df[out_to_country_col] = pd.Series(dtype="string")
+        return df
+
+    mapping = {k.strip(): v for k, v in CITY_TO_COUNTRY_ISO.items()}
+
+    if from_city_col in df.columns:
+        s_from = df[from_city_col].astype("string").str.strip()
+        df[out_from_country_col] = s_from.map(mapping)
+    else:
+        df[out_from_country_col] = pd.Series(dtype="string")
+
+    if to_city_col in df.columns:
+        s_to = df[to_city_col].astype("string").str.strip()
+        df[out_to_country_col] = s_to.map(mapping)
+    else:
+        df[out_to_country_col] = pd.Series(dtype="string")
+
+    return df
+
+

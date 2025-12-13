@@ -1,115 +1,115 @@
-import requests
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+from typing import Iterable, Optional
+
 import pandas as pd
-from datetime import datetime, timedelta
-from typing import Optional, List
-from config import PROJECT_START_DATE
+import holidays as pyholidays
 
-BASE_URL = "https://openholidaysapi.org"
 
-def _fetch_data(endpoint: str, country_code: str, start_date: str, end_date: str) -> List[dict]:
-    try:
-        resp = requests.get(
-            f"{BASE_URL}/{endpoint}",
-            params={
-                "countryIsoCode": country_code,
-                "validFrom": start_date,
-                "validTo": end_date,
-                "languageIsoCode": "EN" # Prefer English names
+def _kosovo_fixed_holidays(year: int) -> dict[date, str]:
+    """
+    Minimal Kosovo (XK) public holiday set (fixed-date only).
+    Variable-date holidays (Easter/Eid) are intentionally excluded.
+    """
+    return {
+        date(year, 1, 1): "New Year's Day",
+        date(year, 1, 7): "Orthodox Christmas Day",
+        date(year, 2, 17): "Independence Day",
+        date(year, 4, 9): "Constitution Day",
+        date(year, 5, 1): "Labour Day",
+        date(year, 5, 9): "Europe Day",
+        date(year, 12, 25): "Christmas Day (Catholic)",
+    }
+
+
+def get_holidays(
+    *,
+    country_codes: Iterable[str],
+    start_date: date,
+    end_date: date,
+) -> pd.DataFrame:
+    """
+    Generate a holiday dataframe using python-holidays for the given country codes and date range.
+
+    Output schema matches what our feature adder expects:
+    - countryIsoCode, startDate, endDate, category, name_text, nationwide
+    """
+    if start_date > end_date:
+        raise ValueError("start_date must be <= end_date")
+
+    years = list(range(start_date.year - 1, end_date.year + 2))
+
+    rows: list[dict[str, object]] = []
+    for cc0 in country_codes:
+        if cc0 is None:
+            continue
+        cc = str(cc0).strip().upper()
+        if not cc:
+            continue
+
+        # Kosovo (XK) is not supported by python-holidays; we include a minimal fixed list.
+        if cc == "XK":
+            for y in years:
+                for d, name in _kosovo_fixed_holidays(y).items():
+                    if d < start_date or d > end_date:
+                        continue
+                    rows.append(
+                        {
+                            "id": f"XK:{d.isoformat()}",
+                            "countryIsoCode": "XK",
+                            "startDate": pd.Timestamp(d),
+                            "endDate": pd.Timestamp(d),
+                            "category": "Public",
+                            "name_text": name,
+                            "nationwide": True,
+                        }
+                    )
+            continue
+
+        try:
+            cal = pyholidays.country_holidays(cc, years=years)
+        except Exception:
+            # Unknown/unsupported country code in python-holidays.
+            continue
+
+        for d, name in cal.items():
+            if isinstance(d, datetime):
+                d0 = d.date()
+            else:
+                d0 = d
+            if d0 < start_date or d0 > end_date:
+                continue
+            rows.append(
+                {
+                    "id": f"{cc}:{d0.isoformat()}",
+                    "countryIsoCode": cc,
+                    "startDate": pd.Timestamp(d0),
+                    "endDate": pd.Timestamp(d0),
+                    "category": "Public",
+                    "name_text": str(name),
+                    "nationwide": True,
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame(
+            {
+                "id": pd.Series(dtype="string"),
+                "countryIsoCode": pd.Series(dtype="string"),
+                "startDate": pd.Series(dtype="datetime64[ns]"),
+                "endDate": pd.Series(dtype="datetime64[ns]"),
+                "category": pd.Series(dtype="string"),
+                "name_text": pd.Series(dtype="string"),
+                "nationwide": pd.Series(dtype="object"),
             }
         )
-        if resp.status_code == 200:
-            return resp.json()
-    except Exception as e:
-        print(f"Error fetching {endpoint} for {country_code}: {e}")
-    return []
 
-def get_holidays(after: Optional[datetime] = None) -> pd.DataFrame:
-    """
-    Fetch Public and School holidays for all supported countries.
-    Filters for nationwide holidays only.
-    
-    Args:
-        after (datetime, optional): Filter for holidays starting after this date.
-                                   If None, uses PROJECT_START_DATE.
-    
-    Returns:
-        pd.DataFrame: Consolidated DataFrame of holidays.
-    """
-    if after is None:
-        after = PROJECT_START_DATE
-
-    # Define the maximum future horizon we care about (e.g., 1 month from today)
-    # We don't want to infinitely fetch into the future.
-    now = datetime.now()
-    max_horizon = now + timedelta(days=30)
-    
-    # If the database is already up to date beyond our horizon, don't fetch more.
-    if after >= max_horizon:
-        print(f"Database is up to date until {after.date()}, which is beyond the fetch horizon ({max_horizon.date()}). Skipping fetch.")
-        return pd.DataFrame()
-
-    # Determine date range
-    start_date = after.strftime("%Y-%m-%d")
-    end_date = max_horizon.strftime("%Y-%m-%d")
-
-    print(f"Fetching holidays from {start_date} to {end_date}...")
-
-    # 1. Get Countries
-    countries = []
-    try:
-        resp = requests.get(f"{BASE_URL}/Countries")
-        if resp.status_code == 200:
-            countries = resp.json()
-    except Exception as e:
-        print(f"Error fetching countries: {e}")
-        return pd.DataFrame()
-
-    all_holidays = []
-
-    for country in countries:
-        iso = country['isoCode']
-        
-        # Public Holidays
-        ph_data = _fetch_data("PublicHolidays", iso, start_date, end_date)
-        for item in ph_data:
-            # Filter for nationwide
-            if item.get('nationwide', False):
-                item['countryIsoCode'] = iso
-                item['category'] = 'Public'
-                all_holidays.append(item)
-            
-        # School Holidays
-        sh_data = _fetch_data("SchoolHolidays", iso, start_date, end_date)
-        for item in sh_data:
-            # Filter for nationwide
-            if item.get('nationwide', False):
-                item['countryIsoCode'] = iso
-                item['category'] = 'School'
-                all_holidays.append(item)
-
-    if not all_holidays:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(all_holidays)
-    
-    # Normalize columns
-    def get_name(name_list):
-        if not isinstance(name_list, list):
-            return str(name_list)
-        for n in name_list:
-            if n.get('language') == 'EN':
-                return n.get('text')
-        return name_list[0].get('text') if name_list else None
-
-    if 'name' in df.columns:
-        df['name_text'] = df['name'].apply(get_name)
-        
-    # Ensure dates are datetime
-    for col in ['startDate', 'endDate']:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col])
-            
-    if after and 'startDate' in df.columns:
-        df = df[df['startDate'] >= after]
-
+    df = pd.DataFrame(rows)
+    # keep stable order
+    df["countryIsoCode"] = df["countryIsoCode"].astype("string").str.strip().str.upper()
+    df["startDate"] = pd.to_datetime(df["startDate"], errors="coerce")
+    df["endDate"] = pd.to_datetime(df["endDate"], errors="coerce")
+    df = df.dropna(subset=["countryIsoCode", "startDate", "endDate"])
+    df = df.sort_values(by=["countryIsoCode", "startDate"], kind="mergesort").reset_index(drop=True)
     return df
