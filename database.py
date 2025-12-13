@@ -77,6 +77,43 @@ class DatabaseWrapper:
                 
         return pd.DataFrame(all_rows)
 
+    def _normalize_param(self, val):
+        """
+        Normalize values for D1 parameter binding.
+        """
+        if val is None or pd.isna(val):
+            return None
+        if hasattr(val, "isoformat"):
+            return val.isoformat()
+        return str(val)
+
+    def _batch(self, statements: List[dict]):
+        """
+        Execute a D1 batch request (multiple statements in one API call).
+
+        Cloudflare's SDK signature has varied; we try a couple common shapes.
+        """
+        db = self._client.d1.database
+        if not hasattr(db, "batch"):
+            raise AttributeError("Cloudflare D1 batch API is not available in this SDK")
+
+        # Most likely signature (kwargs include `statements`)
+        try:
+            return db.batch(
+                database_id=self.database_id,
+                account_id=self.account_id,
+                statements=statements,
+            )
+        except TypeError:
+            pass
+
+        # Alternative signature (single body payload)
+        return db.batch(
+            database_id=self.database_id,
+            account_id=self.account_id,
+            body={"statements": statements},
+        )
+
     def push_new_rows(self, table_name: str, df: pd.DataFrame, ignore_duplicates: bool = False):
         """
         Push new rows to the database table with a progress bar.
@@ -92,11 +129,19 @@ class DatabaseWrapper:
         num_columns = len(columns)
         if num_columns == 0:
             return
-            
-        # D1 has a limit of 100 parameters per query (binding placeholders).
-        # We calculate batch size based on number of columns.
-        batch_size = max(1, 100 // num_columns)
-        
+
+        # We want to upload up to 500 rows per API call.
+        # D1 has a limit of 100 parameters per *statement*, so we either:
+        # - use the D1 batch API (many single-row inserts per call), or
+        # - fall back to multi-row VALUES inserts capped by bind limits.
+        upload_batch_size = 500
+
+        if num_columns > 100:
+            # Each row would exceed the bind limit even as a single-row insert.
+            raise ValueError(
+                f"Too many columns ({num_columns}) to insert into D1 (max 100 bind params per statement)."
+            )
+
         records = df.to_dict(orient='records')
         
         # Determine SQL statement type
@@ -104,30 +149,39 @@ class DatabaseWrapper:
         
         # Using tqdm for progress bar
         with tqdm(total=len(records), desc=f"Pushing to {table_name}", unit="rows") as pbar:
+            # Prefer D1 batch API: 500 single-row statements per request.
+            try:
+                row_sql = f"{insert_clause} {table_name} ({', '.join(columns)}) VALUES ({', '.join(['?'] * num_columns)})"
+
+                for i in range(0, len(records), upload_batch_size):
+                    batch = records[i : i + upload_batch_size]
+                    statements = []
+
+                    for row in batch:
+                        params = [self._normalize_param(row[col]) for col in columns]
+                        statements.append({"sql": row_sql, "params": params})
+
+                    self._batch(statements)
+                    pbar.update(len(batch))
+
+                return
+            except Exception:
+                # If batch isn't supported (or fails), fall back to the safe multi-row insert approach.
+                pass
+
+            # Fallback: multi-row VALUES insert capped by bind limits (100 params/query).
+            batch_size = max(1, 100 // num_columns)
             for i in range(0, len(records), batch_size):
-                batch = records[i:i + batch_size]
-                
+                batch = records[i : i + batch_size]
+
                 placeholders = []
                 all_params = []
-                
+
                 for row in batch:
-                    row_placeholders = []
+                    placeholders.append(f"({', '.join(['?'] * num_columns)})")
                     for col in columns:
-                        val = row[col]
-                        row_placeholders.append("?")
-                        
-                        if val is None or pd.isna(val):
-                            all_params.append(None)
-                        elif hasattr(val, 'isoformat'):
-                            all_params.append(val.isoformat())
-                        else:
-                            all_params.append(str(val))
-                            
-                    placeholders.append(f"({', '.join(row_placeholders)})")
-                
+                        all_params.append(self._normalize_param(row[col]))
+
                 sql = f"{insert_clause} {table_name} ({', '.join(columns)}) VALUES {', '.join(placeholders)}"
-                
                 self.query(sql, params=all_params)
-                
-                # Update progress bar by the size of the batch processed
                 pbar.update(len(batch))
