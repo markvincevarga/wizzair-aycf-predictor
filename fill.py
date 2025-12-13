@@ -9,6 +9,8 @@ from domain.availabilities import Availabilities
 from source.availabilities import get_availabilities
 from domain.financials import Financials
 from source.financials import get_financials
+from domain.holidays import Holidays
+from source.holidays import get_holidays
 
 app = typer.Typer()
 
@@ -138,6 +140,66 @@ def update_financials(db: DatabaseWrapper, force_backfill: bool = False, ensure_
     except Exception as e:
         print(f"Error fetching/pushing financials: {e}")
 
+def update_holidays(db: DatabaseWrapper, force_backfill: bool = False, ensure_tables: bool = False):
+    """
+    Update holidays data from source to database.
+    """
+    print("\n--- Updating Holidays ---")
+    
+    try:
+        domain = Holidays(db)
+        if ensure_tables:
+            print("Ensuring holidays table exists...")
+            domain.create_table()
+        print("Initialized Holidays domain.")
+    except Exception as e:
+        print(f"Error initializing Holidays domain: {e}")
+        return
+
+    print("Checking latest holiday timestamp in database...")
+    
+    fetch_after = None
+    
+    try:
+        latest_date = domain.latest_data_date()
+        if latest_date:
+            print(f"Latest data date in DB: {latest_date}")
+            fetch_after = latest_date
+        else:
+            print("No existing holiday data found.")
+            if force_backfill:
+                print("Backfill forced by flag.")
+                fetch_after = None
+            elif sys.stdin.isatty():
+                if typer.confirm("Holidays table empty. Perform full backfill?"):
+                    fetch_after = None
+                else:
+                    print("Skipping holidays backfill.")
+                    return
+            else:
+                print("Skipping backfill (non-interactive/no flag).")
+                return
+                
+    except Exception as e:
+        print(f"Error checking latest holiday date: {e}")
+    
+    print(f"Fetching holidays from source (after {fetch_after})...")
+    try:
+        new_data = get_holidays(after=fetch_after)
+        
+        count = len(new_data)
+        print(f"Fetched {count} rows.")
+        
+        if count > 0:
+            print("Pushing to database...")
+            domain.push_new_rows(new_data)
+            print("Done.")
+        else:
+            print("No new data to push.")
+            
+    except Exception as e:
+        print(f"Error fetching/pushing holidays: {e}")
+
 @app.command()
 def fill(
     db_name: str = typer.Option(..., "--db", help="The name of the D1 database to connect to."),
@@ -158,6 +220,7 @@ def fill(
 
     update_availabilities(db, force_backfill, ensure_tables)
     update_financials(db, force_backfill, ensure_tables)
+    update_holidays(db, force_backfill, ensure_tables)
     
     print("\n--- Update Completed ---")
 
