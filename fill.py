@@ -7,10 +7,12 @@ sys.path.append(os.getcwd())
 from database import DatabaseWrapper
 from domain.availabilities import Availabilities
 from source.availabilities import get_availabilities
+from domain.financials import Financials
+from source.financials import get_financials
 
 app = typer.Typer()
 
-def update_availabilities(db: DatabaseWrapper, force_backfill: bool = False):
+def update_availabilities(db: DatabaseWrapper, force_backfill: bool = False, ensure_tables: bool = False):
     """
     Update availabilities data from source to database.
     """
@@ -18,6 +20,9 @@ def update_availabilities(db: DatabaseWrapper, force_backfill: bool = False):
     
     try:
         domain = Availabilities(db)
+        if ensure_tables:
+            print("Ensuring availabilities table exists...")
+            domain.create_table()
         print("Initialized Availabilities domain.")
     except Exception as e:
         print(f"Error initializing Availabilities domain: {e}")
@@ -73,11 +78,71 @@ def update_availabilities(db: DatabaseWrapper, force_backfill: bool = False):
     except Exception as e:
         print(f"Error fetching or pushing data: {e}")
 
+def update_financials(db: DatabaseWrapper, force_backfill: bool = False, ensure_tables: bool = False):
+    """
+    Update financials data from source to database.
+    """
+    print("\n--- Updating Financials ---")
+    
+    try:
+        domain = Financials(db)
+        if ensure_tables:
+            print("Ensuring financials table exists...")
+            domain.create_table()
+        print("Initialized Financials domain.")
+    except Exception as e:
+        print(f"Error initializing Financials domain: {e}")
+        return
+
+    print("Checking latest financial data timestamp in database...")
+    
+    fetch_after = None
+    
+    try:
+        latest_date = domain.latest_data_date()
+        if latest_date:
+            print(f"Latest data date in DB: {latest_date}")
+            fetch_after = latest_date
+        else:
+            print("No existing financial data found.")
+            if force_backfill:
+                print("Backfill forced by flag.")
+                fetch_after = None
+            elif sys.stdin.isatty():
+                if typer.confirm("Financials table empty. Perform full backfill?"):
+                    fetch_after = None
+                else:
+                    print("Skipping financials backfill.")
+                    return
+            else:
+                print("Skipping backfill (non-interactive/no flag).")
+                return
+                
+    except Exception as e:
+        print(f"Error checking latest financials date: {e}")
+    
+    print(f"Fetching financials from source (after {fetch_after})...")
+    try:
+        new_data = get_financials(after=fetch_after)
+        
+        count = len(new_data)
+        print(f"Fetched {count} rows.")
+        
+        if count > 0:
+            print("Pushing to database...")
+            domain.push_new_rows(new_data)
+            print("Done.")
+        else:
+            print("No new data to push.")
+            
+    except Exception as e:
+        print(f"Error fetching/pushing financials: {e}")
 
 @app.command()
 def fill(
     db_name: str = typer.Option(..., "--db", help="The name of the D1 database to connect to."),
-    force_backfill: bool = typer.Option(False, "--force-backfill", help="Force backfill without confirmation if DB is empty.")
+    force_backfill: bool = typer.Option(False, "--force-backfill", help="Force backfill without confirmation if DB is empty."),
+    ensure_tables: bool = typer.Option(False, "--ensure-tables", help="Create tables if they do not exist.")
 ):
     """
     Updates the database with the latest data. Creates the tables if necessary.
@@ -91,7 +156,8 @@ def fill(
         print(f"Error initializing database: {e}")
         raise typer.Exit(code=1)
 
-    update_availabilities(db, force_backfill)
+    update_availabilities(db, force_backfill, ensure_tables)
+    update_financials(db, force_backfill, ensure_tables)
     
     print("\n--- Update Completed ---")
 

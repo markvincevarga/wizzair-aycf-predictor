@@ -2,6 +2,7 @@ import os
 from typing import List, Optional
 import pandas as pd
 from cloudflare import Cloudflare
+from tqdm import tqdm
 
 class DatabaseWrapper:
     def __init__(self, database_name: str, account_id: str = None, api_token: str = None):
@@ -76,12 +77,13 @@ class DatabaseWrapper:
                 
         return pd.DataFrame(all_rows)
 
-    def push_new_rows(self, table_name: str, df: pd.DataFrame):
+    def push_new_rows(self, table_name: str, df: pd.DataFrame, ignore_duplicates: bool = False):
         """
-        Push new rows to the database table.
+        Push new rows to the database table with a progress bar.
         
         :param table_name: The name of the table.
         :param df: The DataFrame containing rows to insert.
+        :param ignore_duplicates: If True, uses INSERT OR IGNORE to handle duplicate key errors.
         """
         if df.empty:
             return
@@ -91,31 +93,41 @@ class DatabaseWrapper:
         if num_columns == 0:
             return
             
+        # D1 has a limit of 100 parameters per query (binding placeholders).
+        # We calculate batch size based on number of columns.
         batch_size = max(1, 100 // num_columns)
         
         records = df.to_dict(orient='records')
         
-        for i in range(0, len(records), batch_size):
-            batch = records[i:i + batch_size]
-            
-            placeholders = []
-            all_params = []
-            
-            for row in batch:
-                row_placeholders = []
-                for col in columns:
-                    val = row[col]
-                    row_placeholders.append("?")
-                    
-                    if val is None or pd.isna(val):
-                        all_params.append(None)
-                    elif hasattr(val, 'isoformat'):
-                        all_params.append(val.isoformat())
-                    else:
-                        all_params.append(str(val))
+        # Determine SQL statement type
+        insert_clause = "INSERT OR IGNORE INTO" if ignore_duplicates else "INSERT INTO"
+        
+        # Using tqdm for progress bar
+        with tqdm(total=len(records), desc=f"Pushing to {table_name}", unit="rows") as pbar:
+            for i in range(0, len(records), batch_size):
+                batch = records[i:i + batch_size]
+                
+                placeholders = []
+                all_params = []
+                
+                for row in batch:
+                    row_placeholders = []
+                    for col in columns:
+                        val = row[col]
+                        row_placeholders.append("?")
                         
-                placeholders.append(f"({', '.join(row_placeholders)})")
-            
-            sql = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES {', '.join(placeholders)}"
-            
-            self.query(sql, params=all_params)
+                        if val is None or pd.isna(val):
+                            all_params.append(None)
+                        elif hasattr(val, 'isoformat'):
+                            all_params.append(val.isoformat())
+                        else:
+                            all_params.append(str(val))
+                            
+                    placeholders.append(f"({', '.join(row_placeholders)})")
+                
+                sql = f"{insert_clause} {table_name} ({', '.join(columns)}) VALUES {', '.join(placeholders)}"
+                
+                self.query(sql, params=all_params)
+                
+                # Update progress bar by the size of the batch processed
+                pbar.update(len(batch))
