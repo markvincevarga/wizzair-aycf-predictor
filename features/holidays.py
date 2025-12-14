@@ -3,6 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from source.holidays import get_holidays
+
 
 def _normalize_country_codes(s: pd.Series) -> pd.Series:
     return s.astype("string").str.strip().str.upper()
@@ -10,7 +12,7 @@ def _normalize_country_codes(s: pd.Series) -> pd.Series:
 
 def add_holiday_distance_features(
     availabilities: pd.DataFrame,
-    holidays: pd.DataFrame,
+    holidays: pd.DataFrame | None = None,
     *,
     availability_date_col: str = "availability_start",
     departure_country_col: str = "departure_from_country",
@@ -31,26 +33,62 @@ def add_holiday_distance_features(
     nationwide holiday *interval* for the given country:
     - `<side>_days_until_next_holiday`: days until the next holiday (0 if within a holiday)
     - `<side>_days_since_prev_holiday`: days since the previous holiday ended (0 if within a holiday)
-    - `<side>_days_since_next_holiday`: negative of days_until_next_holiday
-    - `<side>_days_until_prev_holiday`: negative of days_since_prev_holiday
 
     Holidays are treated as inclusive intervals [startDate, endDate]. If endDate is missing,
     it is treated as equal to startDate.
 
-    Notes:
-    - By default this uses nationwide *Public* holidays (OpenHolidays `category='Public'`).
-    - Some countries in availabilities may not exist in OpenHolidays; those rows remain missing
-      unless `fill_missing_value` is provided.
+    If `holidays` is not provided, this function will generate it on-the-fly via
+    `source.holidays.get_holidays(...)` using:
+    - all country codes present in `departure_country_col` / `destination_country_col`
+    - a wide date range covering the year before the earliest date and the year after the latest date
+      in `availability_date_col` (so both previous/next holidays are always defined).
     """
     if availabilities is None:
         raise TypeError("availabilities must be a pandas DataFrame, got None")
-    if holidays is None:
-        raise TypeError("holidays must be a pandas DataFrame, got None")
 
     required_av = {availability_date_col, departure_country_col, destination_country_col}
     missing_av = required_av - set(availabilities.columns)
     if missing_av:
         raise ValueError(f"availabilities is missing required columns: {sorted(missing_av)}")
+
+    # Generate holidays if not provided
+    if holidays is None:
+        # Determine which countries are present in this frame
+        country_codes = sorted(
+            pd.Index(
+                pd.concat(
+                    [
+                        availabilities[departure_country_col].astype("string"),
+                        availabilities[destination_country_col].astype("string"),
+                    ],
+                    ignore_index=True,
+                )
+                .dropna()
+                .unique()
+            )
+            .astype("string")
+            .str.strip()
+            .str.upper()
+            .tolist()
+        )
+
+        # Determine date bounds from availability_date_col
+        d = pd.to_datetime(availabilities[availability_date_col], errors="coerce")
+        if d.notna().any():
+            min_d = d.min().date()
+            max_d = d.max().date()
+            start_date = pd.Timestamp(year=min_d.year - 1, month=1, day=1).date()
+            end_date = pd.Timestamp(year=max_d.year + 1, month=12, day=31).date()
+        else:
+            # Fallback: a reasonable default window if dates are missing
+            today = pd.Timestamp.utcnow().date()
+            start_date = pd.Timestamp(year=today.year - 1, month=1, day=1).date()
+            end_date = pd.Timestamp(year=today.year + 1, month=12, day=31).date()
+
+        holidays = get_holidays(country_codes=country_codes, start_date=start_date, end_date=end_date)
+
+    if holidays is None:
+        raise TypeError("holidays must be a pandas DataFrame (or None to auto-generate), got None")
 
     required_h = {holidays_country_col, holidays_start_col, holidays_end_col}
     missing_h = required_h - set(holidays.columns)
@@ -62,8 +100,6 @@ def add_holiday_distance_features(
         for c in [
             f"{prefix}_days_until_next_holiday",
             f"{prefix}_days_since_prev_holiday",
-            f"{prefix}_days_since_next_holiday",
-            f"{prefix}_days_until_prev_holiday",
         ]:
             if c not in availabilities.columns:
                 availabilities[c] = pd.Series(dtype="Int64")
@@ -76,12 +112,8 @@ def add_holiday_distance_features(
             for col in [
                 "departure_from_days_until_next_holiday",
                 "departure_from_days_since_prev_holiday",
-                "departure_from_days_since_next_holiday",
-                "departure_from_days_until_prev_holiday",
                 "departure_to_days_until_next_holiday",
                 "departure_to_days_since_prev_holiday",
-                "departure_to_days_since_next_holiday",
-                "departure_to_days_until_prev_holiday",
             ]:
                 availabilities[col] = availabilities[col].astype("Int64").fillna(fill_missing_value)
         return availabilities
@@ -101,12 +133,8 @@ def add_holiday_distance_features(
             for col in [
                 "departure_from_days_until_next_holiday",
                 "departure_from_days_since_prev_holiday",
-                "departure_from_days_since_next_holiday",
-                "departure_from_days_until_prev_holiday",
                 "departure_to_days_until_next_holiday",
                 "departure_to_days_since_prev_holiday",
-                "departure_to_days_since_next_holiday",
-                "departure_to_days_until_prev_holiday",
             ]:
                 availabilities[col] = availabilities[col].astype("Int64").fillna(fill_missing_value)
         return availabilities
@@ -141,8 +169,6 @@ def add_holiday_distance_features(
     def _compute_for_side(country_series: pd.Series, prefix: str):
         col_until_next = f"{prefix}_days_until_next_holiday"
         col_since_prev = f"{prefix}_days_since_prev_holiday"
-        col_since_next = f"{prefix}_days_since_next_holiday"
-        col_until_prev = f"{prefix}_days_until_prev_holiday"
 
         cc_s = _normalize_country_codes(country_series)
         if country_fallback_map:
@@ -193,8 +219,6 @@ def add_holiday_distance_features(
 
         availabilities[col_until_next] = out_until_next
         availabilities[col_since_prev] = out_since_prev
-        availabilities[col_since_next] = (-out_until_next).astype("Int64")
-        availabilities[col_until_prev] = (-out_since_prev).astype("Int64")
 
         if fill_missing_value is not None:
             availabilities[col_until_next] = (
@@ -202,12 +226,6 @@ def add_holiday_distance_features(
             )
             availabilities[col_since_prev] = (
                 availabilities[col_since_prev].astype("Int64").fillna(fill_missing_value)
-            )
-            availabilities[col_since_next] = (
-                availabilities[col_since_next].astype("Int64").fillna(fill_missing_value)
-            )
-            availabilities[col_until_prev] = (
-                availabilities[col_until_prev].astype("Int64").fillna(fill_missing_value)
             )
 
     _compute_for_side(availabilities[departure_country_col], "departure_from")
