@@ -1,18 +1,121 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 import pandas as pd
 
-from database import DatabaseWrapper
 from features.generate import generate_route_date_samples
 from features.mapping import (
-    DateLike,
     availabilities_windows_to_daily_start,
     datetime_columns_to_dates,
     remove_data_generated,
 )
-from storage.availabilities import Availabilities
+
+
+def build_all_availabilities_for_timeframe(
+    routes: list[tuple[str, str]],
+    start: datetime,
+    end: datetime,
+) -> pd.DataFrame:
+    """
+    Generate all possible availabilities for every route and every day within a timeframe.
+
+    Creates a complete (routes × days) grid where each row represents a potential
+    availability for a specific route on a specific day.
+
+    Args:
+        routes: List of route pairs as (departure_from, departure_to) tuples.
+                Example: [("BUD", "LTN"), ("LTN", "BUD"), ("BUD", "BCN")]
+        start: Start of the timeframe (inclusive), naive datetime.
+        end: End of the timeframe (inclusive), naive datetime.
+
+    Returns:
+        DataFrame with columns:
+        - departure_from: Airport code for departure
+        - departure_to: Airport code for arrival
+        - availability_start: Date of the availability (one row per day)
+
+    Raises:
+        TypeError: If routes is not a list or start/end are not datetime objects.
+        ValueError: If routes is empty, start > end, or route tuples are malformed.
+
+    Example:
+        >>> routes = [("BUD", "LTN"), ("BUD", "BCN")]
+        >>> start = datetime(2024, 1, 1)
+        >>> end = datetime(2024, 1, 3)
+        >>> df = build_all_availabilities_for_timeframe(routes, start, end)
+        >>> len(df)  # 2 routes × 3 days = 6 rows
+        6
+    """ 
+
+    start_date = start.date()
+    end_date = end.date()
+
+    if start_date > end_date:
+        raise ValueError(f"start must be <= end, got start={start_date}, end={end_date}")
+
+    # Generate daily date range
+    date_range = pd.date_range(start=start_date, end=end_date, freq="D")
+    dates = [d.date() for d in date_range]
+
+    # Build the cross-product of routes × dates
+    rows = []
+    for departure_from, departure_to in routes:
+        for day in dates:
+            rows.append({
+                "departure_from": departure_from,
+                "departure_to": departure_to,
+                "availability_start": day,
+            })
+
+    df = pd.DataFrame(rows)
+    df = _add_availability_date_parts(df)
+    
+    return df
+
+def extract_unique_routes(df: pd.DataFrame) -> list[tuple[str, str]]:
+    """
+    Extract all unique routes from an availabilities DataFrame.
+
+    Args:
+        df: Availabilities DataFrame containing at least 'departure_from' and
+            'departure_to' columns.
+
+    Returns:
+        List of unique (departure_from, departure_to) tuples representing all routes.
+
+    Raises:
+        TypeError: If df is not a DataFrame.
+        ValueError: If df is missing required columns.
+
+    Example:
+        >>> df = pd.DataFrame({
+        ...     "departure_from": ["BUD", "BUD", "LTN"],
+        ...     "departure_to": ["LTN", "LTN", "BUD"],
+        ...     "availability_start": ["2024-01-01", "2024-01-02", "2024-01-01"],
+        ... })
+        >>> extract_unique_routes(df)
+        [('BUD', 'LTN'), ('LTN', 'BUD')]
+    """
+    if df is None:
+        raise TypeError("df must be a pandas DataFrame, got None")
+
+    required = {"departure_from", "departure_to"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"df is missing required columns: {sorted(missing)}")
+
+    if df.empty:
+        return []
+
+    unique_routes = (
+        df[["departure_from", "departure_to"]]
+        .drop_duplicates()
+        .itertuples(index=False, name=None)
+    )
+
+    return list(unique_routes)
 
 
 def _add_availability_date_parts(
@@ -199,7 +302,9 @@ def add_rolling_occurs_mean_feature(
 
     rolling_sorted = df_sorted.groupby(group_cols, sort=False, group_keys=False)[
         occurs_col
-    ].apply(lambda s: s.shift(1).rolling(window=window_days, min_periods=min_periods).mean())
+    ].apply(
+        lambda s: s.shift(1).rolling(window=window_days, min_periods=min_periods).mean()
+    )
 
     df[col_name] = rolling_sorted.reindex(df.index).astype("Float64")
     return df
@@ -236,56 +341,23 @@ def sort_availabilities_occurs_feature(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def build_availabilities_occurs_feature(
-    db: DatabaseWrapper,
-    *,
-    include_country_codes: bool = True,
-    start_date: Optional[DateLike] = None,
-    end_date: Optional[DateLike] = None,
-) -> pd.DataFrame:
-    """
-    Build a labeled (route x date) feature frame for AYCF availability occurrence.
-
-    Loads availabilities from the database, builds the labeled per-day frame, and then
-    applies derived features.
-    """
-    domain = Availabilities(db)
-    raw = domain.get_all(include_country_codes=include_country_codes)
-    return build_availabilities_occurs_feature_from_df(
-        raw,
-        start_date=start_date,
-        end_date=end_date,
-    )
-
-
 def build_availabilities_occurs_feature_from_df(
     availabilities: pd.DataFrame,
-    *,
-    start_date: Optional[DateLike] = None,
-    end_date: Optional[DateLike] = None,
 ) -> pd.DataFrame:
     """
-    Same as `build_availabilities_occurs_feature`, but starts from an availabilities DataFrame.
+    Build a labeled (route x day) feature frame from an availabilities DataFrame.
 
     The input dataframe is expected to look like `storage.availabilities.Availabilities.get_all(...)`,
     i.e. include at least:
     - departure_from, departure_to
     - availability_start, availability_end
     - optionally data_generated, id, and country code columns
+
+    Timeline boundaries are determined per-route automatically based on each route's
+    first and last observed availability dates.
     """
     if availabilities is None:
         raise TypeError("availabilities must be a pandas DataFrame, got None")
-
-    # Normalize optional global start/end to plain `date` so comparisons are consistent.
-    def _parse_to_date(x: Optional[DateLike]):
-        if x is None:
-            return None
-        return pd.to_datetime(x, errors="raise").date()
-
-    window_start = _parse_to_date(start_date)
-    window_end = _parse_to_date(end_date)
-    if window_start is not None and window_end is not None and window_start > window_end:
-        raise ValueError("start_date must be <= end_date")
 
     # Positive (observed) rows: expand windows to daily `availability_start` rows and drop `availability_end`
     cleaned = datetime_columns_to_dates(remove_data_generated(availabilities))
@@ -293,20 +365,12 @@ def build_availabilities_occurs_feature_from_df(
     pos = pos.copy()
     pos["occurs"] = 1.0
 
-    # Apply the global window to positives as well (otherwise start/end only constrain negatives).
-    if not pos.empty and "availability_start" in pos.columns:
-        if window_start is not None:
-            pos = pos[pos["availability_start"] >= window_start]
-        if window_end is not None:
-            pos = pos[pos["availability_start"] <= window_end]
-
     # Negative sampling frame (same schema as the daily positives; no availability_end)
+    # Timeline boundaries are set per-route by generate_route_date_samples.
     neg = generate_route_date_samples(
         availabilities=cleaned.drop(columns=["availability_end"])
         if "availability_end" in cleaned.columns
         else cleaned,
-        start_date=window_start,
-        end_date=window_end,
     ).copy()
     neg["occurs"] = 0.0
 
@@ -315,7 +379,9 @@ def build_availabilities_occurs_feature_from_df(
 
     if combined.empty:
         # Ensure `occurs` exists and is float even for empty frames.
-        combined["occurs"] = combined.get("occurs", pd.Series(dtype="float")).astype(float)
+        combined["occurs"] = combined.get("occurs", pd.Series(dtype="float")).astype(
+            float
+        )
         return add_derived_features(combined)
 
     # Prefer occurs=1.0 when a sampled row collides with an observed row.
@@ -330,7 +396,8 @@ def build_availabilities_occurs_feature_from_df(
         ignore_cols.add("id")
     dedupe_subset = [c for c in combined.columns if c not in ignore_cols]
 
-    combined = combined.drop_duplicates(subset=dedupe_subset, keep="first").reset_index(drop=True)
+    combined = combined.drop_duplicates(subset=dedupe_subset, keep="first").reset_index(
+        drop=True
+    )
 
     return add_derived_features(combined)
-
