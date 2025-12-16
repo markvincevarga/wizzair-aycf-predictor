@@ -1,9 +1,9 @@
 # %%
 from features.availabilities import (
-    build_availabilities_occurs_feature_from_df,
-    extract_unique_routes,
-    sort_availabilities_occurs_feature,
-    build_all_availabilities_for_timeframe,
+    build_labeled_features,
+    extract_routes,
+    sort_features,
+    build_route_date_grid,
 )
 from storage.availabilities import Availabilities
 from database import DatabaseWrapper
@@ -22,15 +22,15 @@ db = DatabaseWrapper(database_name=DB_NAME)
 availabilities_start = Availabilities(db).latest_availability_start() - timedelta(days=14)
 availabilities = Availabilities(db).availability_start_ge(start_date=availabilities_start)
 
-historical_availabilities = build_availabilities_occurs_feature_from_df(availabilities)
-historical_availabilities = sort_availabilities_occurs_feature(historical_availabilities)
+historical_availabilities = build_labeled_features(availabilities)
+historical_availabilities = sort_features(historical_availabilities)
 historical_availabilities.tail()
 # %%
 # Generate future possibilities
 start = Availabilities(db).latest_availability_start() + timedelta(days=1)
 end = start + timedelta(days=7)
-routes = extract_unique_routes(historical_availabilities)
-future_availabilities = build_all_availabilities_for_timeframe(routes, start, end)
+routes = extract_routes(historical_availabilities)
+future_availabilities = build_route_date_grid(routes, start, end)
 future_availabilities.tail()
 
 # %%
@@ -43,3 +43,5 @@ financials = Financials(db).get_all()
 all_availabilities = add_latest_neer_features(all_availabilities, financials)
 all_availabilities.head()
  # %%
+print(all_availabilities.head())
+print(all_availabilities.tail())

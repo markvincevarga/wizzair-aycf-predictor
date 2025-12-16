@@ -13,68 +13,12 @@ from features.mapping import (
 )
 
 
-def build_all_availabilities_for_timeframe(
-    routes: list[tuple[str, str]],
-    start: datetime,
-    end: datetime,
-) -> pd.DataFrame:
-    """
-    Generate all possible availabilities for every route and every day within a timeframe.
+# =============================================================================
+# Route Utilities
+# =============================================================================
 
-    Creates a complete (routes × days) grid where each row represents a potential
-    availability for a specific route on a specific day.
 
-    Args:
-        routes: List of route pairs as (departure_from, departure_to) tuples.
-                Example: [("BUD", "LTN"), ("LTN", "BUD"), ("BUD", "BCN")]
-        start: Start of the timeframe (inclusive), naive datetime.
-        end: End of the timeframe (inclusive), naive datetime.
-
-    Returns:
-        DataFrame with columns:
-        - departure_from: Airport code for departure
-        - departure_to: Airport code for arrival
-        - availability_start: Date of the availability (one row per day)
-
-    Raises:
-        TypeError: If routes is not a list or start/end are not datetime objects.
-        ValueError: If routes is empty, start > end, or route tuples are malformed.
-
-    Example:
-        >>> routes = [("BUD", "LTN"), ("BUD", "BCN")]
-        >>> start = datetime(2024, 1, 1)
-        >>> end = datetime(2024, 1, 3)
-        >>> df = build_all_availabilities_for_timeframe(routes, start, end)
-        >>> len(df)  # 2 routes × 3 days = 6 rows
-        6
-    """ 
-
-    start_date = start.date()
-    end_date = end.date()
-
-    if start_date > end_date:
-        raise ValueError(f"start must be <= end, got start={start_date}, end={end_date}")
-
-    # Generate daily date range
-    date_range = pd.date_range(start=start_date, end=end_date, freq="D")
-    dates = [d.date() for d in date_range]
-
-    # Build the cross-product of routes × dates
-    rows = []
-    for departure_from, departure_to in routes:
-        for day in dates:
-            rows.append({
-                "departure_from": departure_from,
-                "departure_to": departure_to,
-                "availability_start": day,
-            })
-
-    df = pd.DataFrame(rows)
-    df = _add_availability_date_parts(df)
-    
-    return df
-
-def extract_unique_routes(df: pd.DataFrame) -> list[tuple[str, str]]:
+def extract_routes(df: pd.DataFrame) -> list[tuple[str, str]]:
     """
     Extract all unique routes from an availabilities DataFrame.
 
@@ -95,7 +39,7 @@ def extract_unique_routes(df: pd.DataFrame) -> list[tuple[str, str]]:
         ...     "departure_to": ["LTN", "LTN", "BUD"],
         ...     "availability_start": ["2024-01-01", "2024-01-02", "2024-01-01"],
         ... })
-        >>> extract_unique_routes(df)
+        >>> extract_routes(df)
         [('BUD', 'LTN'), ('LTN', 'BUD')]
     """
     if df is None:
@@ -118,7 +62,33 @@ def extract_unique_routes(df: pd.DataFrame) -> list[tuple[str, str]]:
     return list(unique_routes)
 
 
-def _add_availability_date_parts(
+def _infer_route_group_cols(df: pd.DataFrame) -> list[str]:
+    """
+    Infer the columns that uniquely identify a route in our feature frames.
+
+    Base route key: departure_from, departure_to
+    If both country columns exist, they are included as well.
+    """
+    if df is None:
+        raise TypeError("df must be a pandas DataFrame, got None")
+
+    group_cols = ["departure_from", "departure_to"]
+    if "departure_from_country" in df.columns and "departure_to_country" in df.columns:
+        group_cols += ["departure_from_country", "departure_to_country"]
+
+    missing = [c for c in group_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"df is missing required route columns: {missing}")
+
+    return group_cols
+
+
+# =============================================================================
+# Date Utilities
+# =============================================================================
+
+
+def _add_date_parts(
     df: pd.DataFrame,
     *,
     date_col: str = "availability_start",
@@ -153,53 +123,74 @@ def _add_availability_date_parts(
     return df
 
 
-def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+def build_route_date_grid(
+    routes: list[tuple[str, str]],
+    start: datetime,
+    end: datetime,
+) -> pd.DataFrame:
     """
-    Add derived feature columns to an existing availabilities feature frame.
+    Generate all possible availabilities for every route and every day within a timeframe.
 
-    This is intended to be called *after* building the base labeled frame
-    (e.g. from `build_availabilities_occurs_feature_from_df`), so it can be reused
-    consistently across training and prediction pipelines.
-    """
-    if df is None:
-        raise TypeError("df must be a pandas DataFrame, got None")
+    Creates a complete (routes × days) grid where each row represents a potential
+    availability for a specific route on a specific day.
 
-    # Intentionally mutate the incoming dataframe in-place (no copies).
-    _add_availability_date_parts(df, date_col="availability_start")
+    Args:
+        routes: List of route pairs as (departure_from, departure_to) tuples.
+                Example: [("BUD", "LTN"), ("LTN", "BUD"), ("BUD", "BCN")]
+        start: Start of the timeframe (inclusive), naive datetime.
+        end: End of the timeframe (inclusive), naive datetime.
 
-    # Lagged label features (only when `occurs` exists on the frame).
-    if "occurs" in df.columns:
-        add_lagged_occurs_feature(df, lag=1)
-        add_lagged_occurs_feature(df, lag=2)
-        add_lagged_occurs_feature(df, lag=3)
-        add_rolling_occurs_mean_feature(df, window_days=7)
-        add_rolling_occurs_mean_feature(df, window_days=14)
+    Returns:
+        DataFrame with columns:
+        - departure_from: Airport code for departure
+        - departure_to: Airport code for arrival
+        - availability_start: Date of the availability (one row per day)
 
+    Raises:
+        TypeError: If routes is not a list or start/end are not datetime objects.
+        ValueError: If routes is empty, start > end, or route tuples are malformed.
+
+    Example:
+        >>> routes = [("BUD", "LTN"), ("BUD", "BCN")]
+        >>> start = datetime(2024, 1, 1)
+        >>> end = datetime(2024, 1, 3)
+        >>> df = build_route_date_grid(routes, start, end)
+        >>> len(df)  # 2 routes × 3 days = 6 rows
+        6
+    """ 
+
+    start_date = start.date()
+    end_date = end.date()
+
+    if start_date > end_date:
+        raise ValueError(f"start must be <= end, got start={start_date}, end={end_date}")
+
+    # Generate daily date range
+    date_range = pd.date_range(start=start_date, end=end_date, freq="D")
+    dates = [d.date() for d in date_range]
+
+    # Build the cross-product of routes × dates
+    rows = []
+    for departure_from, departure_to in routes:
+        for day in dates:
+            rows.append({
+                "departure_from": departure_from,
+                "departure_to": departure_to,
+                "availability_start": day,
+            })
+
+    df = pd.DataFrame(rows)
+    df = _add_date_parts(df)
+    
     return df
 
 
-def _infer_route_group_cols(df: pd.DataFrame) -> list[str]:
-    """
-    Infer the columns that uniquely identify a route in our feature frames.
-
-    Base route key: departure_from, departure_to
-    If both country columns exist, they are included as well.
-    """
-    if df is None:
-        raise TypeError("df must be a pandas DataFrame, got None")
-
-    group_cols = ["departure_from", "departure_to"]
-    if "departure_from_country" in df.columns and "departure_to_country" in df.columns:
-        group_cols += ["departure_from_country", "departure_to_country"]
-
-    missing = [c for c in group_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"df is missing required route columns: {missing}")
-
-    return group_cols
+# =============================================================================
+# Feature Builders
+# =============================================================================
 
 
-def add_lagged_occurs_feature(
+def add_lagged_feature(
     df: pd.DataFrame,
     *,
     lag: int,
@@ -255,7 +246,7 @@ def add_lagged_occurs_feature(
     return df
 
 
-def add_rolling_occurs_mean_feature(
+def add_rolling_mean_feature(
     df: pd.DataFrame,
     *,
     window_days: int,
@@ -310,38 +301,37 @@ def add_rolling_occurs_mean_feature(
     return df
 
 
-def sort_availabilities_occurs_feature(df: pd.DataFrame) -> pd.DataFrame:
+def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Sort a labeled availabilities feature frame by route then date.
+    Add derived feature columns to an existing availabilities feature frame.
 
-    Sorting keys (when present):
-    - departure_from, departure_to
-    - availability_start, availability_end
-    - departure_from_country, departure_to_country (if present)
+    This is intended to be called *after* building the base labeled frame
+    (e.g. from `build_labeled_features`), so it can be reused consistently
+    across training and prediction pipelines.
     """
     if df is None:
         raise TypeError("df must be a pandas DataFrame, got None")
 
-    sort_cols: list[str] = []
-    for c in [
-        "departure_from",
-        "departure_to",
-        "departure_from_country",
-        "departure_to_country",
-        "availability_start",
-    ]:
-        if c in df.columns:
-            sort_cols.append(c)
+    # Intentionally mutate the incoming dataframe in-place (no copies).
+    _add_date_parts(df, date_col="availability_start")
 
-    if not sort_cols:
-        return df.copy()
+    # Lagged label features (only when `occurs` exists on the frame).
+    if "occurs" in df.columns:
+        add_lagged_feature(df, lag=1)
+        add_lagged_feature(df, lag=2)
+        add_lagged_feature(df, lag=3)
+        add_rolling_mean_feature(df, window_days=7)
+        add_rolling_mean_feature(df, window_days=14)
 
-    return df.sort_values(by=sort_cols, ascending=True, kind="mergesort").reset_index(
-        drop=True
-    )
+    return df
 
 
-def build_availabilities_occurs_feature_from_df(
+# =============================================================================
+# Main Functions
+# =============================================================================
+
+
+def build_labeled_features(
     availabilities: pd.DataFrame,
 ) -> pd.DataFrame:
     """
@@ -401,3 +391,34 @@ def build_availabilities_occurs_feature_from_df(
     )
 
     return add_derived_features(combined)
+
+
+def sort_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Sort a labeled availabilities feature frame by route then date.
+
+    Sorting keys (when present):
+    - departure_from, departure_to
+    - availability_start, availability_end
+    - departure_from_country, departure_to_country (if present)
+    """
+    if df is None:
+        raise TypeError("df must be a pandas DataFrame, got None")
+
+    sort_cols: list[str] = []
+    for c in [
+        "departure_from",
+        "departure_to",
+        "departure_from_country",
+        "departure_to_country",
+        "availability_start",
+    ]:
+        if c in df.columns:
+            sort_cols.append(c)
+
+    if not sort_cols:
+        return df.copy()
+
+    return df.sort_values(by=sort_cols, ascending=True, kind="mergesort").reset_index(
+        drop=True
+    )
