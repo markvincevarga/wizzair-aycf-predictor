@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 from features.generate import generate_route_date_samples
@@ -301,6 +302,54 @@ def add_rolling_mean_feature(
     return df
 
 
+def add_route_count_features(
+    df: pd.DataFrame,
+    *,
+    occurs_col: str = "occurs",
+) -> pd.DataFrame:
+    """
+    Add route-level count and leave-one-out mean encoding features.
+
+    Mutates `df` in-place by adding:
+    - route_count: Number of observations per route
+    - route_count_log: Log-transformed route count (log1p)
+    - route_loo_mean: Leave-one-out mean of occurs per route
+
+    Args:
+        df: Existing feature dataframe with route columns and occurs.
+        occurs_col: Label column to use for LOO encoding (default: occurs).
+
+    Returns:
+        The same dataframe instance, with new columns added.
+    """
+    if df is None:
+        raise TypeError("df must be a pandas DataFrame, got None")
+
+    if occurs_col not in df.columns:
+        raise ValueError(f"df must contain '{occurs_col}'")
+
+    group_cols = _infer_route_group_cols(df)
+
+    if df.empty:
+        df["route_count"] = pd.Series(dtype="Int64")
+        df["route_count_log"] = pd.Series(dtype="Float64")
+        df["route_loo_mean"] = pd.Series(dtype="Float64")
+        return df
+
+    # Route count: number of observations per route
+    route_counts = df.groupby(group_cols).size()
+    df["route_count"] = df.set_index(group_cols).index.map(route_counts).astype("Int64")
+    df["route_count_log"] = np.log1p(df["route_count"].astype(float))
+
+    # Leave-one-out mean encoding
+    route_sums = df.groupby(group_cols)[occurs_col].transform("sum")
+    route_loo_mean = (route_sums - df[occurs_col]) / (df["route_count"] - 1)
+    global_mean = df[occurs_col].mean()
+    df["route_loo_mean"] = route_loo_mean.fillna(global_mean).astype("Float64")
+
+    return df
+
+
 def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Add derived feature columns to an existing availabilities feature frame.
@@ -323,6 +372,7 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
         add_rolling_mean_feature(df, window_days=7)
         add_rolling_mean_feature(df, window_days=14)
         df["occurs_lag_1x2"] = df["occurs_lag_1"] * df["occurs_lag_2"]
+        add_route_count_features(df)
 
     return df
 
