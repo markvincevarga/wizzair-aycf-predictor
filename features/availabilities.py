@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 from features.generate import generate_route_date_samples
@@ -301,6 +302,225 @@ def add_rolling_mean_feature(
     return df
 
 
+def add_route_count_features(
+    df: pd.DataFrame,
+    *,
+    occurs_col: str = "occurs",
+) -> pd.DataFrame:
+    """
+    Add route-level count and leave-one-out mean encoding features.
+
+    Mutates `df` in-place by adding:
+    - route_count: Number of observations per route
+    - route_count_log: Log-transformed route count (log1p)
+    - route_loo_mean: Leave-one-out mean of occurs per route
+
+    Args:
+        df: Existing feature dataframe with route columns and occurs.
+        occurs_col: Label column to use for LOO encoding (default: occurs).
+
+    Returns:
+        The same dataframe instance, with new columns added.
+    """
+    if df is None:
+        raise TypeError("df must be a pandas DataFrame, got None")
+
+    if occurs_col not in df.columns:
+        raise ValueError(f"df must contain '{occurs_col}'")
+
+    group_cols = _infer_route_group_cols(df)
+
+    if df.empty:
+        df["route_count"] = pd.Series(dtype="Int64")
+        df["route_count_log"] = pd.Series(dtype="Float64")
+        df["route_loo_mean"] = pd.Series(dtype="Float64")
+        return df
+
+    # Route count: number of observations per route
+    route_counts = df.groupby(group_cols).size()
+    df["route_count"] = df.set_index(group_cols).index.map(route_counts).astype("Int64")
+    df["route_count_log"] = np.log1p(df["route_count"].astype(float))
+
+    # Leave-one-out mean encoding
+    route_sums = df.groupby(group_cols)[occurs_col].transform("sum")
+    route_loo_mean = (route_sums - df[occurs_col]) / (df["route_count"] - 1)
+    global_mean = df[occurs_col].mean()
+    df["route_loo_mean"] = route_loo_mean.fillna(global_mean).astype("Float64")
+
+    return df
+
+
+def add_consecutive_days_feature(
+    df: pd.DataFrame,
+    *,
+    date_col: str = "availability_start",
+    occurs_col: str = "occurs",
+) -> pd.DataFrame:
+    """
+    Add a feature counting consecutive days of same availability status (lagged).
+
+    Mutates `df` in-place by adding:
+    - consecutive_available_prev: Count of consecutive days route was available up to yesterday
+    - consecutive_unavailable_prev: Count of consecutive days route was unavailable up to yesterday
+
+    Uses lagged values to prevent data leakage (excludes current day).
+    """
+    if df is None:
+        raise TypeError("df must be a pandas DataFrame, got None")
+
+    if date_col not in df.columns:
+        raise ValueError(f"df must contain '{date_col}'")
+    if occurs_col not in df.columns:
+        raise ValueError(f"df must contain '{occurs_col}'")
+
+    group_cols = _infer_route_group_cols(df)
+
+    if df.empty:
+        df["consecutive_available_prev"] = pd.Series(dtype="Int64")
+        df["consecutive_unavailable_prev"] = pd.Series(dtype="Int64")
+        return df
+
+    sort_cols = group_cols + [date_col]
+    sorted_idx = df.sort_values(by=sort_cols, ascending=True, kind="mergesort").index
+    df_sorted = df.loc[sorted_idx].copy()
+
+    def _count_consecutive_lagged(group: pd.DataFrame, target_val: float) -> pd.Series:
+        """Count consecutive prior occurrences of target_val (lagged by 1)."""
+        is_target = (group[occurs_col] == target_val).astype(int)
+        # Create groups where consecutive runs get same id
+        run_id = (is_target != is_target.shift(1)).cumsum()
+        # Count within each run, but only for target rows
+        counts = is_target.groupby(run_id).cumsum()
+        # Shift by 1 to exclude current day (prevent leakage)
+        return counts.shift(1).fillna(0)
+
+    # Compute for available (1) and unavailable (0) - lagged
+    consec_avail = df_sorted.groupby(group_cols, sort=False, group_keys=False).apply(
+        lambda g: _count_consecutive_lagged(g, 1.0), include_groups=False
+    )
+    consec_unavail = df_sorted.groupby(group_cols, sort=False, group_keys=False).apply(
+        lambda g: _count_consecutive_lagged(g, 0.0), include_groups=False
+    )
+
+    df["consecutive_available_prev"] = consec_avail.reindex(df.index).astype("Int64")
+    df["consecutive_unavailable_prev"] = consec_unavail.reindex(df.index).astype("Int64")
+
+    return df
+
+
+def add_route_availability_rate(
+    df: pd.DataFrame,
+    *,
+    date_col: str = "availability_start",
+    occurs_col: str = "occurs",
+) -> pd.DataFrame:
+    """
+    Add historical route availability rate as a feature.
+
+    Mutates `df` in-place by adding:
+    - route_avail_rate: Cumulative availability rate up to (but not including) current day
+    - route_avail_rate_7d: Rolling 7-day availability rate
+    - route_avail_rate_30d: Rolling 30-day availability rate
+
+    Uses leave-one-out style: excludes current observation to prevent leakage.
+    """
+    if df is None:
+        raise TypeError("df must be a pandas DataFrame, got None")
+
+    if date_col not in df.columns:
+        raise ValueError(f"df must contain '{date_col}'")
+    if occurs_col not in df.columns:
+        raise ValueError(f"df must contain '{occurs_col}'")
+
+    group_cols = _infer_route_group_cols(df)
+
+    if df.empty:
+        df["route_avail_rate"] = pd.Series(dtype="Float64")
+        df["route_avail_rate_7d"] = pd.Series(dtype="Float64")
+        df["route_avail_rate_30d"] = pd.Series(dtype="Float64")
+        return df
+
+    sort_cols = group_cols + [date_col]
+    sorted_idx = df.sort_values(by=sort_cols, ascending=True, kind="mergesort").index
+    df_sorted = df.loc[sorted_idx]
+
+    # Cumulative rate (shifted to exclude current)
+    cumsum = df_sorted.groupby(group_cols, sort=False)[occurs_col].cumsum().shift(1)
+    cumcount = df_sorted.groupby(group_cols, sort=False).cumcount()
+    cumcount_shifted = cumcount.where(cumcount > 0, np.nan)
+    cum_rate = cumsum / cumcount_shifted
+
+    # Rolling rates
+    rolling_7d = df_sorted.groupby(group_cols, sort=False, group_keys=False)[
+        occurs_col
+    ].apply(lambda s: s.shift(1).rolling(window=7, min_periods=1).mean())
+
+    rolling_30d = df_sorted.groupby(group_cols, sort=False, group_keys=False)[
+        occurs_col
+    ].apply(lambda s: s.shift(1).rolling(window=30, min_periods=1).mean())
+
+    df["route_avail_rate"] = cum_rate.reindex(df.index).astype("Float64")
+    df["route_avail_rate_7d"] = rolling_7d.reindex(df.index).astype("Float64")
+    df["route_avail_rate_30d"] = rolling_30d.reindex(df.index).astype("Float64")
+
+    return df
+
+
+def add_day_of_week_route_interaction(
+    df: pd.DataFrame,
+    *,
+    date_col: str = "availability_start",
+    occurs_col: str = "occurs",
+) -> pd.DataFrame:
+    """
+    Add day-of-week x route interaction features.
+
+    Captures route-specific weekly patterns by computing:
+    - dow_route_avail_rate: Historical availability rate for this route on this weekday
+
+    Uses shifted cumulative stats to prevent leakage.
+    """
+    if df is None:
+        raise TypeError("df must be a pandas DataFrame, got None")
+
+    if date_col not in df.columns:
+        raise ValueError(f"df must contain '{date_col}'")
+    if occurs_col not in df.columns:
+        raise ValueError(f"df must contain '{occurs_col}'")
+
+    group_cols = _infer_route_group_cols(df)
+
+    if df.empty:
+        df["dow_route_avail_rate"] = pd.Series(dtype="Float64")
+        return df
+
+    # Ensure day_of_week exists
+    if "day_of_week" not in df.columns:
+        s = pd.to_datetime(df[date_col], errors="coerce")
+        df["day_of_week"] = s.dt.dayofweek.astype("Int64")
+
+    # Group by route + day of week
+    dow_group_cols = group_cols + ["day_of_week"]
+
+    sort_cols = group_cols + [date_col]
+    sorted_idx = df.sort_values(by=sort_cols, ascending=True, kind="mergesort").index
+    df_sorted = df.loc[sorted_idx]
+
+    # Compute cumulative availability rate per route + day of week
+    cumsum = df_sorted.groupby(dow_group_cols, sort=False)[occurs_col].cumsum().shift(1)
+    cumcount = df_sorted.groupby(dow_group_cols, sort=False).cumcount()
+    cumcount_shifted = cumcount.where(cumcount > 0, np.nan)
+    dow_rate = cumsum / cumcount_shifted
+
+    # Fill NaN with global day-of-week rate as fallback
+    global_dow_rate = df.groupby("day_of_week")[occurs_col].transform("mean")
+    dow_rate_filled = dow_rate.reindex(df.index).fillna(global_dow_rate)
+
+    df["dow_route_avail_rate"] = dow_rate_filled.astype("Float64")
+
+    return df
+
+
 def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Add derived feature columns to an existing availabilities feature frame.
@@ -322,6 +542,13 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
         add_lagged_feature(df, lag=3)
         add_rolling_mean_feature(df, window_days=7)
         add_rolling_mean_feature(df, window_days=14)
+        df["occurs_lag_1x2"] = df["occurs_lag_1"] * df["occurs_lag_2"]
+        add_route_count_features(df)
+
+        # New features for improved classification
+        add_consecutive_days_feature(df)
+        add_route_availability_rate(df)
+        add_day_of_week_route_interaction(df)
 
     return df
 
