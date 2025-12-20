@@ -36,24 +36,24 @@ export CLOUDFLARE_API_TOKEN=...
 **Fill** updates the database with the latest data. Creates the tables if necessary.
 
 ```bash
-uv run fill.py --db wizz
+uv run fill.py --db wizz-aycf
 ```
 
 **Train** uses all the available data in the database to train the model.
 Holidays are not stored in the database; they are generated at training time.
 
 ```bash
-uv run train.py --db wizz
+uv run train.py --db wizz-aycf
 ```
 
 **Predict** uses the latest available data to put predictions in the database.
 
 ```bash
-uv run predict.py --db wizz
+uv run predict.py --db wizz-aycf
 ```
 
 **UI** starts a http server to present the predictions from the database.
 
 ```bash
-uv run streamlit run app.py --db wizz
+uv run streamlit run app.py --db wizz-aycf
 ```
