@@ -13,8 +13,17 @@ from features.encoding import add_label_encoded_columns
 DEFAULT_CACHE_DIR = ".cache/aycf"
 
 
-def get(force_rebuild: bool = False, cache_dir: str = DEFAULT_CACHE_DIR) -> pd.DataFrame:
-    """Load training data from cache or build it from database."""
+def get(db_name: str, force_rebuild: bool = False, cache_dir: str = DEFAULT_CACHE_DIR) -> pd.DataFrame:
+    """Load training data from cache or build it from database.
+    
+    Args:
+        db_name: The name of the D1 database to connect to.
+        force_rebuild: If True, rebuild data from database even if cache exists.
+        cache_dir: Directory for caching training data.
+        
+    Returns:
+        DataFrame with training features and labels.
+    """
     cache_path = os.path.join(cache_dir, "training_data.csv")
 
     if not force_rebuild and os.path.exists(cache_path):
@@ -22,7 +31,7 @@ def get(force_rebuild: bool = False, cache_dir: str = DEFAULT_CACHE_DIR) -> pd.D
 
     os.makedirs(cache_dir, exist_ok=True)
 
-    db = DatabaseWrapper(database_name="wizz-aycf")
+    db = DatabaseWrapper(database_name=db_name)
     availabilities = Availabilities(db).get_all()
 
     df = build_labeled_features(availabilities)
