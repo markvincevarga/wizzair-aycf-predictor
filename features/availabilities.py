@@ -322,6 +322,7 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
         add_lagged_feature(df, lag=3)
         add_rolling_mean_feature(df, window_days=7)
         add_rolling_mean_feature(df, window_days=14)
+        df["occurs_lag_1x2"] = df["occurs_lag_1"] * df["occurs_lag_2"]
 
     return df
 
