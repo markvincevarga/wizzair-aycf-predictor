@@ -6,7 +6,7 @@ from features.availabilities import (
     build_route_date_grid,
 )
 from storage.availabilities import Availabilities
-from database import DatabaseWrapper
+from storage.database import DatabaseWrapper
 from datetime import timedelta
 import pandas as pd
 from features.financial import add_latest_neer_features

@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 
-from database import DatabaseWrapper
+from storage.database import DatabaseWrapper
 from storage.availabilities import Availabilities
 from storage.financials import Financials
 from features.availabilities import build_labeled_features, sort_features

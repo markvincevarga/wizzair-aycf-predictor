@@ -185,3 +185,4 @@ class DatabaseWrapper:
                 sql = f"{insert_clause} {table_name} ({', '.join(columns)}) VALUES {', '.join(placeholders)}"
                 self.query(sql, params=all_params)
                 pbar.update(len(batch))
+

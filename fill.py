@@ -4,7 +4,7 @@ import typer
 
 sys.path.append(os.getcwd())
 
-from database import DatabaseWrapper
+from storage.database import DatabaseWrapper
 from storage.availabilities import Availabilities
 from source.availabilities import get_availabilities
 from storage.financials import Financials

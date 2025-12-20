@@ -1,7 +1,7 @@
 from typing import Optional
 import pandas as pd
 from datetime import datetime
-from database import DatabaseWrapper
+from storage.database import DatabaseWrapper
 
 class Financials:
     def __init__(self, db: DatabaseWrapper):
