@@ -55,6 +55,10 @@ def add_latest_neer_features(
     destination_country_col: str = "departure_to_country",
     out_departure_col: str = "departure_from_neer",
     out_destination_col: str = "departure_to_neer",
+    out_departure_mean_3w_col: str = "departure_from_neer_mean_3w",
+    out_destination_mean_3w_col: str = "departure_to_neer_mean_3w",
+    out_departure_mean_6w_col: str = "departure_from_neer_mean_6w",
+    out_destination_mean_6w_col: str = "departure_to_neer_mean_6w",
     financial_country_col: str = "REF_AREA",
     financial_date_col: str = "TIME_PERIOD",
     financial_value_col: str = "OBS_VALUE",
@@ -72,6 +76,10 @@ def add_latest_neer_features(
     This mutates `availabilities` by adding:
     - out_departure_col (default: departure_from_neer)
     - out_destination_col (default: departure_to_neer)
+    - out_departure_mean_3w_col (default: departure_from_neer_mean_3w)
+    - out_destination_mean_3w_col (default: departure_to_neer_mean_3w)
+    - out_departure_mean_6w_col (default: departure_from_neer_mean_6w)
+    - out_destination_mean_6w_col (default: departure_to_neer_mean_6w)
     """
     if availabilities is None:
         raise TypeError("availabilities must be a pandas DataFrame, got None")
@@ -94,6 +102,10 @@ def add_latest_neer_features(
     if availabilities.empty or neer.empty:
         availabilities[out_departure_col] = pd.Series(dtype="Float64")
         availabilities[out_destination_col] = pd.Series(dtype="Float64")
+        availabilities[out_departure_mean_3w_col] = pd.Series(dtype="Float64")
+        availabilities[out_destination_mean_3w_col] = pd.Series(dtype="Float64")
+        availabilities[out_departure_mean_6w_col] = pd.Series(dtype="Float64")
+        availabilities[out_destination_mean_6w_col] = pd.Series(dtype="Float64")
         return availabilities
 
     left_date = pd.to_datetime(availabilities[availability_date_col], errors="coerce")
@@ -135,11 +147,60 @@ def add_latest_neer_features(
 
         return out
 
+    def _rolling_mean_neer_for_country(
+        country_series: pd.Series, window: pd.Timedelta
+    ) -> pd.Series:
+        """Compute rolling mean NEER over a window ending at availability_start."""
+        out = pd.Series(pd.NA, index=availabilities.index, dtype="Float64")
+        cc_s = country_series.astype("string").str.strip().str.upper()
+
+        if country_fallback_map:
+            cc_s = cc_s.replace(country_fallback_map)
+
+        for cc, idxs in cc_s.groupby(cc_s, dropna=True).groups.items():
+            cc_key = str(cc)
+            if cc_key not in neer_idx:
+                continue
+
+            right_dates, right_vals = neer_idx[cc_key]
+            left_dates_arr = left_date.loc[idxs].to_numpy(dtype="datetime64[ns]")
+            window_ns = window.value  # Timedelta in nanoseconds
+
+            mapped = np.full(shape=len(left_dates_arr), fill_value=np.nan, dtype="float64")
+            for i, ref_date in enumerate(left_dates_arr):
+                if pd.isna(ref_date):
+                    continue
+                start_date = ref_date - window_ns
+                # Find observations in (start_date, ref_date]
+                mask = (right_dates > start_date) & (right_dates <= ref_date)
+                if np.any(mask):
+                    mapped[i] = np.nanmean(right_vals[mask])
+
+            out.loc[idxs] = pd.Series(mapped, index=idxs, dtype="Float64")
+
+        return out
+
     availabilities[out_departure_col] = _asof_neer_for_country(
         availabilities[departure_country_col]
     )
     availabilities[out_destination_col] = _asof_neer_for_country(
         availabilities[destination_country_col]
+    )
+
+    # 3-week rolling means
+    availabilities[out_departure_mean_3w_col] = _rolling_mean_neer_for_country(
+        availabilities[departure_country_col], pd.Timedelta(weeks=3)
+    )
+    availabilities[out_destination_mean_3w_col] = _rolling_mean_neer_for_country(
+        availabilities[destination_country_col], pd.Timedelta(weeks=3)
+    )
+
+    # 6-week rolling means
+    availabilities[out_departure_mean_6w_col] = _rolling_mean_neer_for_country(
+        availabilities[departure_country_col], pd.Timedelta(weeks=6)
+    )
+    availabilities[out_destination_mean_6w_col] = _rolling_mean_neer_for_country(
+        availabilities[destination_country_col], pd.Timedelta(weeks=6)
     )
 
     if fill_missing_value is not None:
@@ -148,6 +209,18 @@ def add_latest_neer_features(
         )
         availabilities[out_destination_col] = (
             availabilities[out_destination_col].astype("Float64").fillna(fill_missing_value)
+        )
+        availabilities[out_departure_mean_3w_col] = (
+            availabilities[out_departure_mean_3w_col].astype("Float64").fillna(fill_missing_value)
+        )
+        availabilities[out_destination_mean_3w_col] = (
+            availabilities[out_destination_mean_3w_col].astype("Float64").fillna(fill_missing_value)
+        )
+        availabilities[out_departure_mean_6w_col] = (
+            availabilities[out_departure_mean_6w_col].astype("Float64").fillna(fill_missing_value)
+        )
+        availabilities[out_destination_mean_6w_col] = (
+            availabilities[out_destination_mean_6w_col].astype("Float64").fillna(fill_missing_value)
         )
 
     return availabilities
