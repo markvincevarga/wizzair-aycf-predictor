@@ -5,6 +5,8 @@ from sklearn.metrics import mean_squared_error, r2_score
 from xgboost import XGBRegressor
 import matplotlib.pyplot as plt
 
+from helpers import show_or_save_plot
+
 df = data.training.get()
 df.tail()
 # %%
@@ -50,6 +52,6 @@ plt.yticks(range(len(sorted_idx)), [feature_names[i] for i in sorted_idx])
 plt.xlabel("Feature Importance")
 plt.title("XGBoost Feature Importance")
 plt.tight_layout()
-plt.show()
+show_or_save_plot("xgboost_feature_importance")
 
 # %%
