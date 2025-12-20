@@ -8,6 +8,7 @@ from features.availabilities import build_labeled_features, sort_features
 from features.holidays import add_holiday_distance_features
 from features.country_codes import add_country_codes_columns
 from features.financial import add_latest_neer_features
+from features.encoding import add_label_encoded_columns
 
 DEFAULT_CACHE_DIR = ".cache/aycf"
 
@@ -31,6 +32,8 @@ def get(force_rebuild: bool = False, cache_dir: str = DEFAULT_CACHE_DIR) -> pd.D
 
     financials = Financials(db).get_all()
     df = add_latest_neer_features(df, financials)
+
+    df = add_label_encoded_columns(df, ["departure_from", "departure_to"])
 
     df.to_csv(cache_path, index=False)
     return df
