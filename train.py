@@ -1,5 +1,6 @@
 import json
 
+import pandas as pd
 import typer
 import joblib
 import matplotlib.pyplot as plt
@@ -38,6 +39,7 @@ def train(
     db_name: str = typer.Option(..., "--db", help="The name of the D1 database to connect to."),
     bucket: str = typer.Option(..., "--bucket", help="The S3 bucket to upload model artifacts to."),
     force_rebuild: bool = typer.Option(False, "--force-rebuild", help="Force rebuild training data from database."),
+    cutoff_date: str = typer.Option(None, "--cutoff-date", help="Optional cutoff date for training data (YYYY-MM-DD)."),
 ):
     """
     Train XGBoost classifier on availability data and save the model.
@@ -48,6 +50,14 @@ def train(
     print("Loading training data...")
     df = data.training.get(db_name=db_name, force_rebuild=force_rebuild)
     print(f"Loaded {len(df)} samples.")
+
+    # Apply cutoff date if provided
+    if cutoff_date:
+        cutoff = pd.Timestamp(cutoff_date)
+        print(f"Applying cutoff date: {cutoff}")
+        original_count = len(df)
+        df = df[pd.to_datetime(df["availability_start"]) < cutoff]
+        print(f"Filtered out {original_count - len(df)} samples. Remaining: {len(df)}")
 
     # Time-based train-test split (80% train, 20% test)
     X_train, X_test, y_train, y_test = train_test_split(df)
@@ -121,6 +131,7 @@ def train(
         test_size=len(X_test),
         train_class_dist={str(k): int(v) for k, v in y_train.value_counts().to_dict().items()},
         test_class_dist={str(k): int(v) for k, v in y_test.value_counts().to_dict().items()},
+        cutoff_date=cutoff_date,
     )
     stats_path = config.ARTIFACTS_DIR / "model_stats.json"
     with open(stats_path, "w") as f:

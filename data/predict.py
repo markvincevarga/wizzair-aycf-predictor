@@ -29,6 +29,7 @@ class PredictionSession:
         self,
         db_name: str,
         history_days: int = 30,
+        simulation_date: Optional[date] = None,
     ):
         """
         Initialize the session by loading initial history and route metadata.
@@ -36,6 +37,9 @@ class PredictionSession:
         Args:
             db_name: Database name.
             history_days: Number of days of history to keep in memory.
+            simulation_date: Optional date to anchor the simulation at.
+                             If provided, history will be loaded up to this date,
+                             and predictions will start from the next day.
         """
         self.db_name = db_name
         self.history_days = history_days
@@ -55,14 +59,21 @@ class PredictionSession:
         self.all_to_cities = set(self.routes_df["departure_to"].unique())
         
         # 2. Fetch Initial History
-        latest_start = self.avail.latest_availability_start()
-        if not latest_start:
-            raise ValueError("No availability data found in database.")
+        if simulation_date:
+            self.current_sim_date = simulation_date
+        else:
+            latest_start = self.avail.latest_availability_start()
+            if not latest_start:
+                raise ValueError("No availability data found in database.")
+            self.current_sim_date = latest_start.date()
         
-        self.current_sim_date = latest_start.date()
+        # We need history up to current_sim_date.
+        # So we query a bit more than history_days back to be safe, 
+        # and then filter strictly <= current_sim_date.
+        start_history_dt = datetime.combine(self.current_sim_date, datetime.min.time()) - timedelta(days=history_days)
         
-        start_history = latest_start - timedelta(days=history_days)
-        history_raw = self.avail.availability_start_ge(start_history)
+        # Fetch raw data starting from the beginning of our history window
+        history_raw = self.avail.availability_start_ge(start_history_dt)
         
         # Build labeled features for history (occurs=0 or 1)
         self.history_features = build_labeled_features(history_raw)

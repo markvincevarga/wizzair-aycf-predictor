@@ -31,7 +31,12 @@ def predict(
     ),
     days: int = typer.Option(7, "--days", help="Number of days to predict."),
     output_path: Path = typer.Option(
-        None, "--output", help="Path to save predictions CSV."
+        config.ARTIFACTS_DIR / "predictions.csv",
+        "--output",
+        help="Path to save predictions CSV.",
+    ),
+    start_date: str = typer.Option(
+        None, "--start-date", help="Optional start date for predictions (YYYY-MM-DD)."
     ),
 ):
     """
@@ -41,8 +46,23 @@ def predict(
 
     # 1. Initialize Session
     print("Initializing prediction session...")
+    
+    simulation_date = None
+    if start_date:
+        # If start_date is provided (e.g. 2024-01-01), we want the simulation 
+        # to be anchored at the day BEFORE (2023-12-31), so that the 
+        # first 'next_day' prediction is for start_date.
+        try:
+            target_start = pd.to_datetime(start_date).date()
+            simulation_date = target_start - timedelta(days=1)
+            print(f"Prediction start date: {target_start}")
+            print(f"Simulation anchor date: {simulation_date}")
+        except Exception as e:
+            print(f"Error parsing start date: {e}")
+            raise typer.Exit(code=1)
+
     try:
-        session = PredictionSession(db_name=db_name)
+        session = PredictionSession(db_name=db_name, simulation_date=simulation_date)
     except Exception as e:
         print(f"Error initializing session: {e}")
         raise typer.Exit(code=1)
@@ -130,6 +150,8 @@ def predict(
     print(display_df.head(10))
 
     if output_path:
+        # Ensure parent directory exists
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         print(f"\nSaving results to {output_path}...")
         final_df.to_csv(output_path, index=False)
 

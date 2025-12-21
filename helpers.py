@@ -66,6 +66,7 @@ def collect_model_stats(
     test_size: int,
     train_class_dist: dict,
     test_class_dist: dict,
+    cutoff_date: str = None,
 ) -> dict:
     """
     Collect model performance statistics into a dictionary.
@@ -78,6 +79,7 @@ def collect_model_stats(
         test_size: Number of samples in test set.
         train_class_dist: Class distribution in training set.
         test_class_dist: Class distribution in test set.
+        cutoff_date: Optional cutoff date used for training data.
 
     Returns:
         Dictionary containing all model statistics.
@@ -91,7 +93,9 @@ def collect_model_stats(
             "test_size": test_size,
             "train_class_distribution": train_class_dist,
             "test_class_distribution": test_class_dist,
+            "cutoff_date": cutoff_date,
         },
+
         "metrics": {
             "accuracy": float(accuracy_score(y_test, y_pred)),
             "precision": float(precision_score(y_test, y_pred)),
