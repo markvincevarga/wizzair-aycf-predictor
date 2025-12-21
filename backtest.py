@@ -27,6 +27,7 @@ def run_backtest(
     model_params: Optional[Dict[str, Any]] = None,
     predictions_file: Path = Path("artifacts/backtest_predictions.csv"),
     comparison_file: Path = Path("artifacts/backtest_comparison.csv"),
+    force_rebuild: bool = True,
 ) -> List[Dict[str, Any]]:
     """
     Run backtest for multiple cutoff dates and return collected metrics.
@@ -44,7 +45,7 @@ def run_backtest(
             db_name=db_name,
             bucket=bucket_name,
             cutoff_date=cutoff_date,
-            force_rebuild=True,
+            force_rebuild=force_rebuild,
             model_params=model_params
         )
 
