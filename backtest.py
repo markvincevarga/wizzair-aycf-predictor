@@ -2,7 +2,7 @@ import sys
 import json
 import pandas as pd
 import typer
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
@@ -28,6 +28,7 @@ def run_backtest(
     predictions_file: Path = Path("artifacts/backtest_predictions.csv"),
     comparison_file: Path = Path("artifacts/backtest_comparison.csv"),
     force_rebuild: bool = True,
+    status_callback: Optional[Callable[[str], None]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Run backtest for multiple cutoff dates and return collected metrics.
@@ -40,6 +41,8 @@ def run_backtest(
         print(f"{'='*40}")
 
         # 1. Training Step
+        if status_callback:
+            status_callback(f"Training ({cutoff_date})")
         print("\n=== Step 1: Training Model ===")
         train_model(
             db_name=db_name,
@@ -50,6 +53,8 @@ def run_backtest(
         )
 
         # 2. Prediction Step
+        if status_callback:
+            status_callback(f"Predicting ({cutoff_date})")
         print("\n=== Step 2: Generating Predictions ===")
         generate_predictions(
             db_name=db_name,
@@ -59,6 +64,8 @@ def run_backtest(
         )
 
         # 3. Evaluation Step
+        if status_callback:
+            status_callback(f"Evaluating ({cutoff_date})")
         print("\n=== Step 3: Evaluating Performance ===")
         
         # Load predictions

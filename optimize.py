@@ -2,6 +2,7 @@ import optuna
 import typer
 import statistics
 from pathlib import Path
+from tqdm import tqdm
 from backtest import run_backtest
 
 app = typer.Typer()
@@ -20,6 +21,12 @@ def optimize(
     # Dates for backtesting
     cutoff_dates = ["2025-09-10", "2025-11-10", "2025-12-01"]
 
+    # Silence Optuna logging to avoid interfering with tqdm
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    # Initialize progress bar
+    pbar = tqdm(total=trials, desc="Optimization Progress", unit="trial")
+
     def objective(trial):
         # Hyperparameter search space
         params = {
@@ -36,7 +43,11 @@ def optimize(
             "eval_metric": "logloss",
         }
 
-        print(f"\nTrial {trial.number}: Testing params: {params}")
+        tqdm.write(f"\nTrial {trial.number + 1}/{trials}: Testing params: {params}")
+
+        # Define status callback
+        def status_update(status: str):
+            pbar.set_description(f"Trial {trial.number + 1}/{trials} - {status}")
 
         # Run backtest for all dates
         # Using force_rebuild=False to use cached data if available (filled by previous runs or manually)
@@ -54,25 +65,32 @@ def optimize(
                 model_params=params,
                 predictions_file=Path(f"artifacts/optuna_preds_{trial.number}.csv"),
                 comparison_file=Path(f"artifacts/optuna_comp_{trial.number}.csv"),
-                force_rebuild=False 
+                force_rebuild=False,
+                status_callback=status_update
             )
         except Exception as e:
-            print(f"Trial {trial.number} failed: {e}")
+            tqdm.write(f"Trial {trial.number + 1} failed: {e}")
+            pbar.update(1)
             # Return a bad score if backtest fails
             return 0.0
 
         if not results:
+            pbar.update(1)
             return 0.0
 
         f1_scores = [r["f1"] for r in results]
         mean_f1 = statistics.mean(f1_scores)
         
-        print(f"Trial {trial.number} Results: F1 Scores: {f1_scores}, Mean F1: {mean_f1}")
+        tqdm.write(f"Trial {trial.number + 1} Results: F1 Scores: {f1_scores}, Mean F1: {mean_f1}")
+        pbar.update(1)
         return mean_f1
 
     print("Starting Optuna optimization...")
     study = optuna.create_study(direction="maximize", storage=storage)
-    study.optimize(objective, n_trials=trials)
+    try:
+        study.optimize(objective, n_trials=trials)
+    finally:
+        pbar.close()
 
     print("\n" + "="*40)
     print("Optimization Completed")
