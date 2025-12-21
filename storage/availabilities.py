@@ -1,6 +1,6 @@
 from typing import Optional
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date, time
 from storage.database import DatabaseWrapper
 
 CITY_TO_COUNTRY_ISO: dict[str, str] = {
@@ -44,7 +44,6 @@ CITY_TO_COUNTRY_ISO: dict[str, str] = {
     "Chania": "GR",
     "Chisinau": "MD",
     "Cluj": "RO",
-    "Cologne/Bonn": "DE",
     "Comiso": "IT",
     "Constanta": "RO",
     "Copenhagen": "DK",
@@ -399,3 +398,33 @@ class Availabilities:
         )
         """
         self.db.query(sql)
+
+    def get_recent_availabilities(self, start_date: date, end_date: date) -> pd.DataFrame:
+        """
+        Get availabilities within a specific date range.
+        
+        :param start_date: Start date of the range (inclusive).
+        :param end_date: End date of the range (inclusive).
+        :return: DataFrame with columns [departure_from, departure_to, availability_start, is_available].
+        """
+        start_ts = datetime.combine(start_date, time.min).timestamp()
+        end_ts = datetime.combine(end_date, time.max).timestamp()
+        
+        sql = """
+        SELECT departure_from, departure_to, availability_start
+        FROM availabilities
+        WHERE availability_start >= ? AND availability_start <= ?
+        """
+        
+        df = self.db.query(sql, [str(start_ts), str(end_ts)])
+        
+        if df.empty:
+            return pd.DataFrame(columns=['departure_from', 'departure_to', 'availability_start', 'is_available'])
+            
+        df['availability_start'] = pd.to_datetime(df['availability_start'], unit='s')
+        df['is_available'] = True
+        
+        # Deduplicate just in case multiple records for same route/day exist (though unexpected with unique index)
+        df = df.drop_duplicates(subset=['departure_from', 'departure_to', 'availability_start'])
+        
+        return df[['departure_from', 'departure_to', 'availability_start', 'is_available']]

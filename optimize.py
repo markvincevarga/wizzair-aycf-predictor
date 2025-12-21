@@ -9,7 +9,7 @@ app = typer.Typer()
 
 @app.command()
 def optimize(
-    db_name: str = typer.Option("wizz", "--db", help="Name of the database"),
+    db_name: str = typer.Option("wizz-aycf", "--db", help="Name of the database"),
     trials: int = typer.Option(20, "--trials", help="Number of Optuna trials"),
     days: int = typer.Option(7, "--days", help="Prediction horizon for backtests"),
     storage: str = typer.Option(None, "--storage", help="Optuna storage URL (e.g., sqlite:///db.sqlite3)"),

@@ -182,6 +182,7 @@ def generate_predictions(
         final_df.to_csv(output_path, index=False)
 
     if upload:
+        # Hardcoded database name for predictions
         predictions_db = db_name
         print(f"\nUploading predictions to DB: {predictions_db}...")
         try:
