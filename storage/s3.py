@@ -70,3 +70,4 @@ class S3Storage:
         response = self.s3_client.get_object(Bucket=self.bucket_name, Key=key)
         return response["Body"].read()
 
+
