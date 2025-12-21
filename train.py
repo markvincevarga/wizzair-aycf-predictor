@@ -1,5 +1,5 @@
 import json
-from typing import Optional
+from typing import Optional, Dict, Any
 
 import pandas as pd
 import typer
@@ -34,16 +34,42 @@ DROP_COLS = [
     "departure_to_country",
 ]
 
+# Optimized hyperparameters via Optuna with TimeSeriesSplit cross-validation
+DEFAULT_MODEL_PARAMS = {
+    "n_estimators": 403,
+    "max_depth": 10,
+    "learning_rate": 0.1013574857037285,
+    "min_child_weight": 1,
+    "subsample": 0.8500168201866831,
+    "colsample_bytree": 0.7255486664643275,
+    "gamma": 0.10597988439650874,
+    "reg_alpha": 0.020124256179981054,
+    "reg_lambda": 0.0474101828395834,
+    "random_state": 42,
+    "eval_metric": "logloss",
+}
 
-@app.command()
-def train(
-    db_name: str = typer.Option(..., "--db", help="The name of the D1 database to connect to."),
-    bucket: Optional[str] = typer.Option(None, "--bucket", help="The S3 bucket to upload model artifacts to."),
-    force_rebuild: bool = typer.Option(False, "--force-rebuild", help="Force rebuild training data from database."),
-    cutoff_date: str = typer.Option(None, "--cutoff-date", help="Optional cutoff date for training data (YYYY-MM-DD)."),
-):
+
+def train_model(
+    db_name: str,
+    bucket: Optional[str] = None,
+    force_rebuild: bool = False,
+    cutoff_date: Optional[str] = None,
+    model_params: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """
     Train XGBoost classifier on availability data and save the model.
+
+    Args:
+        db_name: The name of the D1 database to connect to.
+        bucket: The S3 bucket to upload model artifacts to.
+        force_rebuild: Force rebuild training data from database.
+        cutoff_date: Optional cutoff date for training data (YYYY-MM-DD).
+        model_params: Optional dictionary of hyperparameters for the XGBoost model.
+                      If None, uses DEFAULT_MODEL_PARAMS.
+
+    Returns:
+        Dictionary containing the trained model, metrics, and statistics.
     """
     print(f"--- Training Model (DB: {db_name}) ---")
 
@@ -75,22 +101,13 @@ def train(
     print(f"Class distribution in train: {y_train.value_counts().to_dict()}")
     print(f"Class distribution in test: {y_test.value_counts().to_dict()}")
 
-    # Train XGBoost Classifier with tuned hyperparameters
-    # (optimized via Optuna with TimeSeriesSplit cross-validation)
+    # Train XGBoost Classifier
     print("\nTraining XGBoost classifier...")
-    xgb_classifier = XGBClassifier(
-        n_estimators=403,
-        max_depth=10,
-        learning_rate=0.1013574857037285,
-        min_child_weight=1,
-        subsample=0.8500168201866831,
-        colsample_bytree=0.7255486664643275,
-        gamma=0.10597988439650874,
-        reg_alpha=0.020124256179981054,
-        reg_lambda=0.0474101828395834,
-        random_state=42,
-        eval_metric="logloss",
-    )
+    
+    # Use provided params or defaults
+    params = model_params if model_params is not None else DEFAULT_MODEL_PARAMS.copy()
+    
+    xgb_classifier = XGBClassifier(**params)
     xgb_classifier.fit(X_train, y_train)
 
     # Predictions
@@ -164,6 +181,36 @@ def train(
     show_or_save_plot("xgboost_feature_importance")
 
     print("\n--- Training Completed ---")
+
+    return {
+        "model": xgb_classifier,
+        "metrics": {
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "auc_roc": auc_roc,
+        },
+        "stats": stats,
+    }
+
+
+@app.command()
+def train(
+    db_name: str = typer.Option(..., "--db", help="The name of the D1 database to connect to."),
+    bucket: Optional[str] = typer.Option(None, "--bucket", help="The S3 bucket to upload model artifacts to."),
+    force_rebuild: bool = typer.Option(False, "--force-rebuild", help="Force rebuild training data from database."),
+    cutoff_date: str = typer.Option(None, "--cutoff-date", help="Optional cutoff date for training data (YYYY-MM-DD)."),
+):
+    """
+    Train XGBoost classifier on availability data and save the model.
+    """
+    train_model(
+        db_name=db_name,
+        bucket=bucket,
+        force_rebuild=force_rebuild,
+        cutoff_date=cutoff_date,
+    )
 
 
 if __name__ == "__main__":

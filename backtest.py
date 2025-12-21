@@ -12,6 +12,7 @@ from sklearn.metrics import (
     classification_report,
 )
 import data.training
+from train import train_model
 
 app = typer.Typer()
 
@@ -38,14 +39,12 @@ def backtest(
     
     # 1. Training Step
     print("\n=== Step 1: Training Model ===")
-    train_cmd = [
-        "uv", "run", "--env-file", env_file, "train.py",
-        "--db", db_name,
-        "--bucket", bucket_name,
-        "--cutoff-date", cutoff_date,
-        "--force-rebuild"
-    ]
-    run_command(train_cmd)
+    train_model(
+        db_name=db_name,
+        bucket=bucket_name,
+        cutoff_date=cutoff_date,
+        force_rebuild=True
+    )
 
     # 2. Prediction Step
     print("\n=== Step 2: Generating Predictions ===")
