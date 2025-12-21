@@ -36,15 +36,15 @@ DROP_COLS = [
 
 # Optimized hyperparameters via Optuna with TimeSeriesSplit cross-validation
 DEFAULT_MODEL_PARAMS = {
-    "n_estimators": 446,
-    "max_depth": 15,
-    "learning_rate": 0.1103914762537064,
-    "min_child_weight": 1,
-    "subsample": 0.7628214088073132,
-    "colsample_bytree": 0.6881776540489016,
-    "gamma": 0.052210580978588494,
-    "reg_alpha": 3.7729597268962256,
-    "reg_lambda": 4.946672294099576,
+    "n_estimators": 959,
+    "max_depth": 12,
+    "learning_rate": 0.1346288970573375,
+    "min_child_weight": 3,
+    "subsample": 0.7294556391431639,
+    "colsample_bytree": 0.8954423043106637,
+    "gamma": 0.04284778817559609,
+    "reg_alpha": 0.1032886633471255,
+    "reg_lambda": 0.01138457636945536,
     "random_state": 42,
     "eval_metric": "logloss",
 }
