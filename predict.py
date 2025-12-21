@@ -22,30 +22,27 @@ DROP_COLS = [
     "occurs",  # Target column
 ]
 
-
-@app.command()
-def predict(
-    db_name: str = typer.Option(..., "--db", help="The name of the D1 database."),
-    model_path: Path = typer.Option(
-        config.ARTIFACTS_DIR / "xgboost_classifier.joblib",
-        "--model",
-        help="Path to trained model.",
-    ),
-    days: int = typer.Option(7, "--days", help="Number of days to predict."),
-    output_path: Path = typer.Option(
-        config.ARTIFACTS_DIR / "predictions.csv",
-        "--output",
-        help="Path to save predictions CSV.",
-    ),
-    start_date: str = typer.Option(
-        None, "--start-date", help="Optional start date for predictions (YYYY-MM-DD)."
-    ),
-    bucket: Optional[str] = typer.Option(
-        None, "--bucket", help="Optional S3 bucket to download model from."
-    ),
-):
+def generate_predictions(
+    db_name: str,
+    model_path: Path = config.ARTIFACTS_DIR / "xgboost_classifier.joblib",
+    days: int = 7,
+    output_path: Optional[Path] = config.ARTIFACTS_DIR / "predictions.csv",
+    start_date: Optional[str] = None,
+    bucket: Optional[str] = None,
+) -> pd.DataFrame:
     """
     Generate predictions for future availability day-by-day.
+
+    Args:
+        db_name: The name of the D1 database.
+        model_path: Path to trained model.
+        days: Number of days to predict.
+        output_path: Path to save predictions CSV.
+        start_date: Optional start date for predictions (YYYY-MM-DD).
+        bucket: Optional S3 bucket to download model from.
+
+    Returns:
+        DataFrame containing the predictions.
     """
     print(f"--- Generating Predictions (DB: {db_name}) ---")
 
@@ -97,8 +94,8 @@ def predict(
 
     all_predictions = []
     
-    start_date = session.current_sim_date + timedelta(days=1)
-    print(f"Starting predictions from {start_date} for {days} days...")
+    start_date_obj = session.current_sim_date + timedelta(days=1)
+    print(f"Starting predictions from {start_date_obj} for {days} days...")
 
     # 3. Day-by-Day Loop
     # Retrieve model feature names for validation
@@ -107,7 +104,7 @@ def predict(
         print("Warning: Model does not have feature_names_in_ attribute. Skipping feature validation.")
 
     for i in range(days):
-        target_date = start_date + timedelta(days=i)
+        target_date = start_date_obj + timedelta(days=i)
         print(f"Processing {target_date}...")
 
         # a. Generate Features
@@ -151,7 +148,7 @@ def predict(
     # 4. Aggregate & Save
     if not all_predictions:
         print("No predictions generated.")
-        return
+        return pd.DataFrame()
 
     final_df = pd.concat(all_predictions, ignore_index=True)
     
@@ -174,6 +171,42 @@ def predict(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         print(f"\nSaving results to {output_path}...")
         final_df.to_csv(output_path, index=False)
+
+    return final_df
+
+
+@app.command()
+def predict(
+    db_name: str = typer.Option(..., "--db", help="The name of the D1 database."),
+    model_path: Path = typer.Option(
+        config.ARTIFACTS_DIR / "xgboost_classifier.joblib",
+        "--model",
+        help="Path to trained model.",
+    ),
+    days: int = typer.Option(7, "--days", help="Number of days to predict."),
+    output_path: Path = typer.Option(
+        config.ARTIFACTS_DIR / "predictions.csv",
+        "--output",
+        help="Path to save predictions CSV.",
+    ),
+    start_date: str = typer.Option(
+        None, "--start-date", help="Optional start date for predictions (YYYY-MM-DD)."
+    ),
+    bucket: Optional[str] = typer.Option(
+        None, "--bucket", help="Optional S3 bucket to download model from."
+    ),
+):
+    """
+    Generate predictions for future availability day-by-day.
+    """
+    generate_predictions(
+        db_name=db_name,
+        model_path=model_path,
+        days=days,
+        output_path=output_path,
+        start_date=start_date,
+        bucket=bucket,
+    )
 
 
 if __name__ == "__main__":

@@ -1,4 +1,3 @@
-import subprocess
 import sys
 import pandas as pd
 import typer
@@ -13,15 +12,10 @@ from sklearn.metrics import (
 )
 import data.training
 from train import train_model
+from predict import generate_predictions
+from pathlib import Path
 
 app = typer.Typer()
-
-def run_command(command):
-    print(f"Running: {' '.join(command)}")
-    result = subprocess.run(command, check=True, text=True)
-    if result.returncode != 0:
-        print(f"Error running command: {command}")
-        sys.exit(result.returncode)
 
 @app.command()
 def backtest(
@@ -48,14 +42,12 @@ def backtest(
 
     # 2. Prediction Step
     print("\n=== Step 2: Generating Predictions ===")
-    predict_cmd = [
-        "uv", "run", "--env-file", env_file, "predict.py",
-        "--db", db_name,
-        "--start-date", cutoff_date,
-        "--days", str(prediction_days),
-        "--output", predictions_file
-    ]
-    run_command(predict_cmd)
+    generate_predictions(
+        db_name=db_name,
+        start_date=cutoff_date,
+        days=prediction_days,
+        output_path=Path(predictions_file)
+    )
 
     # 3. Evaluation Step
     print("\n=== Step 3: Evaluating Performance ===")
@@ -140,3 +132,4 @@ def backtest(
 
 if __name__ == "__main__":
     app()
+
