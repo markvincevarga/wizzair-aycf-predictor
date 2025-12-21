@@ -1,4 +1,15 @@
+from datetime import datetime
+
 import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    confusion_matrix,
+)
 
 import config
 
@@ -45,3 +56,48 @@ def show_or_save_plot(name: str, always_store: bool = False) -> None:
         plt.show()
     else:
         plt.close()
+
+
+def collect_model_stats(
+    y_test: np.ndarray,
+    y_pred: np.ndarray,
+    y_pred_proba: np.ndarray,
+    train_size: int,
+    test_size: int,
+    train_class_dist: dict,
+    test_class_dist: dict,
+) -> dict:
+    """
+    Collect model performance statistics into a dictionary.
+
+    Args:
+        y_test: True labels for test set.
+        y_pred: Predicted labels for test set.
+        y_pred_proba: Predicted probabilities for positive class.
+        train_size: Number of samples in training set.
+        test_size: Number of samples in test set.
+        train_class_dist: Class distribution in training set.
+        test_class_dist: Class distribution in test set.
+
+    Returns:
+        Dictionary containing all model statistics.
+    """
+    cm = confusion_matrix(y_test, y_pred)
+
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "dataset": {
+            "train_size": train_size,
+            "test_size": test_size,
+            "train_class_distribution": train_class_dist,
+            "test_class_distribution": test_class_dist,
+        },
+        "metrics": {
+            "accuracy": float(accuracy_score(y_test, y_pred)),
+            "precision": float(precision_score(y_test, y_pred)),
+            "recall": float(recall_score(y_test, y_pred)),
+            "f1_score": float(f1_score(y_test, y_pred)),
+            "auc_roc": float(roc_auc_score(y_test, y_pred_proba)),
+        },
+        "confusion_matrix": cm.tolist(),
+    }
