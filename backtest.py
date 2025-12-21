@@ -25,7 +25,6 @@ def backtest(
     prediction_days: int = typer.Option(14, "--days", help="Number of days to predict"),
     predictions_file: str = typer.Option("artifacts/backtest_predictions.csv", "--predictions-file", help="Path to save prediction results"),
     comparison_file: str = typer.Option("artifacts/backtest_comparison.csv", "--comparison-file", help="Path to save comparison results"),
-    env_file: str = typer.Option(".env", "--env-file", help="Path to .env file"),
 ):
     """
     Run a full backtest: Train model up to cutoff, predict subsequent days, and evaluate against ground truth.
