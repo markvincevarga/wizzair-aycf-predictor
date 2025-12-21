@@ -51,6 +51,18 @@ uv run --env-file=.env train.py --db wizz-aycf --bucket my-model-bucket
 uv run --env-file=.env predict.py --db wizz-aycf
 ```
 
+**Backtest** validates model performance by training on historical data (up to a cutoff) and predicting subsequent days to compare against known outcomes.
+
+```bash
+uv run --env-file=.env backtest.py --db wizz-aycf --cutoff-date 2025-08-05 --days 14
+```
+
+**Optimize** searches for the best XGBoost hyperparameters using Optuna. It runs multiple backtests across different time periods to ensure robust parameters.
+
+```bash
+uv run --env-file=.env optimize.py --db wizz-aycf --trials 20
+```
+
 **UI** starts a http server to present the predictions from the database.
 
 ```bash
