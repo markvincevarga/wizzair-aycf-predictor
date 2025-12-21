@@ -8,6 +8,8 @@ from typing import Optional
 import config
 from data.predict import PredictionSession
 from storage.s3 import S3Storage
+from storage.database import DatabaseWrapper
+from storage.predictions import Predictions
 
 app = typer.Typer()
 
@@ -29,6 +31,7 @@ def generate_predictions(
     output_path: Optional[Path] = config.ARTIFACTS_DIR / "predictions.csv",
     start_date: Optional[str] = None,
     bucket: Optional[str] = None,
+    upload: bool = False,
 ) -> pd.DataFrame:
     """
     Generate predictions for future availability day-by-day.
@@ -40,11 +43,15 @@ def generate_predictions(
         output_path: Path to save predictions CSV.
         start_date: Optional start date for predictions (YYYY-MM-DD).
         bucket: Optional S3 bucket to download model from.
+        upload: Whether to upload predictions to the database.
 
     Returns:
         DataFrame containing the predictions.
     """
     print(f"--- Generating Predictions (DB: {db_name}) ---")
+
+    # Capture prediction time at the start
+    prediction_time = pd.Timestamp.now()
 
     # 1. Initialize Session
     print("Initializing prediction session...")
@@ -152,17 +159,19 @@ def generate_predictions(
 
     final_df = pd.concat(all_predictions, ignore_index=True)
     
-    # Sort by date, departure_from, departure_to
+    # Add prediction time
+    final_df["prediction_time"] = prediction_time
+    
+    # Sort by prediction_time, availability_start, departure_from, departure_to
     final_df = final_df.sort_values(
-        by=["availability_start", "departure_from", "departure_to"],
-        ascending=[True, True, True]
+        by=["prediction_time", "availability_start", "departure_from", "departure_to"],
+        ascending=[True, True, True, True]
     )
 
     print("\nTop 10 Most Likely Available Routes:")
     # For display, we still might want to see the highest probability ones,
     # or just the first few sorted rows?
-    # Keeping the "Top 10" display sorted by probability for relevance, 
-    # but the output file will be sorted as requested.
+    # Keeping the "Top 10" display sorted by probability for relevance
     display_df = final_df.sort_values("predicted_probability", ascending=False)
     print(display_df.head(10))
 
@@ -171,6 +180,19 @@ def generate_predictions(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         print(f"\nSaving results to {output_path}...")
         final_df.to_csv(output_path, index=False)
+
+    if upload:
+        # Hardcoded database name for predictions
+        predictions_db = "predictions"
+        print(f"\nUploading predictions to DB: {predictions_db}...")
+        try:
+            db_wrapper = DatabaseWrapper(database_name=predictions_db)
+            predictions_storage = Predictions(db=db_wrapper)
+            predictions_storage.create_table()
+            predictions_storage.push_new_rows(final_df)
+            print("Upload complete.")
+        except Exception as e:
+            print(f"Error uploading predictions: {e}")
 
     return final_df
 
@@ -195,6 +217,9 @@ def predict(
     bucket: Optional[str] = typer.Option(
         None, "--bucket", help="Optional S3 bucket to download model from."
     ),
+    upload: bool = typer.Option(
+        False, "--upload", help="Upload predictions to the predictions database."
+    ),
 ):
     """
     Generate predictions for future availability day-by-day.
@@ -206,6 +231,7 @@ def predict(
         output_path=output_path,
         start_date=start_date,
         bucket=bucket,
+        upload=upload,
     )
 
 
