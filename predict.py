@@ -3,9 +3,11 @@ import joblib
 import typer
 from pathlib import Path
 from datetime import timedelta
+from typing import Optional
 
 import config
 from data.predict import PredictionSession
+from storage.s3 import S3Storage
 
 app = typer.Typer()
 
@@ -38,6 +40,9 @@ def predict(
     start_date: str = typer.Option(
         None, "--start-date", help="Optional start date for predictions (YYYY-MM-DD)."
     ),
+    bucket: Optional[str] = typer.Option(
+        None, "--bucket", help="Optional S3 bucket to download model from."
+    ),
 ):
     """
     Generate predictions for future availability day-by-day.
@@ -68,9 +73,24 @@ def predict(
         raise typer.Exit(code=1)
 
     # 2. Load Model
+    if bucket:
+        print(f"Downloading model from S3 bucket: {bucket}")
+        try:
+            s3 = S3Storage(bucket_name=bucket)
+            # Ensure parent directory exists
+            model_path.parent.mkdir(parents=True, exist_ok=True)
+            s3.get_file(config.S3_MODEL_KEY, model_path)
+            print(f"Downloaded model to {model_path}")
+        except Exception as e:
+            print(f"Error downloading model from S3: {e}")
+            # If download fails, we might still try to use local model if it exists,
+            # but let's just log the error and proceed to the existence check.
+
     print(f"Loading model from {model_path}...")
     if not model_path.exists():
         print(f"Error: Model file not found at {model_path}")
+        if not bucket:
+            print("Tip: Specify --bucket to download the model from S3.")
         raise typer.Exit(code=1)
 
     model = joblib.load(model_path)

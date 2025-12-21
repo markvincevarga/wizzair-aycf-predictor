@@ -1,4 +1,5 @@
 import json
+from typing import Optional
 
 import pandas as pd
 import typer
@@ -37,7 +38,7 @@ DROP_COLS = [
 @app.command()
 def train(
     db_name: str = typer.Option(..., "--db", help="The name of the D1 database to connect to."),
-    bucket: str = typer.Option(..., "--bucket", help="The S3 bucket to upload model artifacts to."),
+    bucket: Optional[str] = typer.Option(None, "--bucket", help="The S3 bucket to upload model artifacts to."),
     force_rebuild: bool = typer.Option(False, "--force-rebuild", help="Force rebuild training data from database."),
     cutoff_date: str = typer.Option(None, "--cutoff-date", help="Optional cutoff date for training data (YYYY-MM-DD)."),
 ):
@@ -139,12 +140,15 @@ def train(
     print(f"Stats saved to: {stats_path}")
 
     # Upload model and stats to S3
-    print(f"\nUploading artifacts to S3 bucket: {bucket}")
-    s3 = S3Storage(bucket_name=bucket)
-    s3.put_file(model_path, config.S3_MODEL_KEY)
-    print(f"  Uploaded: {config.S3_MODEL_KEY}")
-    s3.put_file(stats_path, config.S3_STATS_KEY)
-    print(f"  Uploaded: {config.S3_STATS_KEY}")
+    if bucket:
+        print(f"\nUploading artifacts to S3 bucket: {bucket}")
+        s3 = S3Storage(bucket_name=bucket)
+        s3.put_file(model_path, config.S3_MODEL_KEY)
+        print(f"  Uploaded: {config.S3_MODEL_KEY}")
+        s3.put_file(stats_path, config.S3_STATS_KEY)
+        print(f"  Uploaded: {config.S3_STATS_KEY}")
+    else:
+        print("\nSkipping S3 upload (no bucket specified).")
 
     # Generate feature importance plot
     feature_importance = xgb_classifier.feature_importances_
