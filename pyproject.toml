@@ -5,6 +5,7 @@ description = "AYCF Predictor"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "boto3>=1.35.0",
     "cloudflare>=4.3.1",
     "holidays>=0.65",
     "ipykernel>=7.1.0",

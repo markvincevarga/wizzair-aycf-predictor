@@ -28,32 +28,31 @@ and the predictions
 
 All steps below require the following environment variables set:
 
-```bash
-# write access to the database
-export CLOUDFLARE_API_TOKEN=...
-```
+1. Rename `.env.example` to `.env`
+2. Fill out all environment variables in `.env`
 
 **Fill** updates the database with the latest data. Creates the tables if necessary.
 
 ```bash
-uv run fill.py --db wizz-aycf
+uv run --env-file=.env fill.py --db wizz-aycf
 ```
 
 **Train** uses all the available data in the database to train the model.
 Holidays are not stored in the database; they are generated at training time.
+Uploads the model and stats to the specified S3 bucket.
 
 ```bash
-uv run train.py --db wizz-aycf
+uv run --env-file=.env train.py --db wizz-aycf --bucket my-model-bucket
 ```
 
 **Predict** uses the latest available data to put predictions in the database.
 
 ```bash
-uv run predict.py --db wizz-aycf
+uv run --env-file=.env predict.py --db wizz-aycf
 ```
 
 **UI** starts a http server to present the predictions from the database.
 
 ```bash
-uv run streamlit run app.py --db wizz-aycf
+uv run --env-file=.env streamlit run app.py --db wizz-aycf
 ```

@@ -1,3 +1,5 @@
+import json
+
 import typer
 import joblib
 import matplotlib.pyplot as plt
@@ -15,7 +17,8 @@ from xgboost import XGBClassifier
 import config
 import data.training
 from data.split import train_test_split
-from helpers import show_or_save_plot
+from helpers import show_or_save_plot, collect_model_stats
+from storage.s3 import S3Storage
 
 app = typer.Typer()
 
@@ -33,6 +36,7 @@ DROP_COLS = [
 @app.command()
 def train(
     db_name: str = typer.Option(..., "--db", help="The name of the D1 database to connect to."),
+    bucket: str = typer.Option(..., "--bucket", help="The S3 bucket to upload model artifacts to."),
     force_rebuild: bool = typer.Option(False, "--force-rebuild", help="Force rebuild training data from database."),
 ):
     """
@@ -107,6 +111,29 @@ def train(
     model_path = config.ARTIFACTS_DIR / "xgboost_classifier.joblib"
     joblib.dump(xgb_classifier, model_path)
     print(f"\nModel saved to: {model_path}")
+
+    # Save model statistics
+    stats = collect_model_stats(
+        y_test=y_test,
+        y_pred=y_pred,
+        y_pred_proba=y_pred_proba,
+        train_size=len(X_train),
+        test_size=len(X_test),
+        train_class_dist={str(k): int(v) for k, v in y_train.value_counts().to_dict().items()},
+        test_class_dist={str(k): int(v) for k, v in y_test.value_counts().to_dict().items()},
+    )
+    stats_path = config.ARTIFACTS_DIR / "model_stats.json"
+    with open(stats_path, "w") as f:
+        json.dump(stats, f, indent=2)
+    print(f"Stats saved to: {stats_path}")
+
+    # Upload model and stats to S3
+    print(f"\nUploading artifacts to S3 bucket: {bucket}")
+    s3 = S3Storage(bucket_name=bucket)
+    s3.put_file(model_path, config.S3_MODEL_KEY)
+    print(f"  Uploaded: {config.S3_MODEL_KEY}")
+    s3.put_file(stats_path, config.S3_STATS_KEY)
+    print(f"  Uploaded: {config.S3_STATS_KEY}")
 
     # Generate feature importance plot
     feature_importance = xgb_classifier.feature_importances_
