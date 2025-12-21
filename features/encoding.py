@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Optional, Iterable
+
 import pandas as pd
 
 
@@ -9,6 +11,7 @@ def add_label_encoded_columns(
     df: pd.DataFrame,
     columns: list[str],
     suffix: str = "_encoded",
+    known_categories: Optional[dict[str, Iterable[str]]] = None,
 ) -> pd.DataFrame:
     """
     Add label-encoded columns for specified categorical columns.
@@ -21,6 +24,9 @@ def add_label_encoded_columns(
         df: Input DataFrame containing the columns to encode.
         columns: List of column names to encode.
         suffix: Suffix to append to encoded column names (default: "_encoded").
+        known_categories: Optional dict mapping column names to list of all possible values.
+                          If provided, encoding will be based on these values (sorted)
+                          rather than just the values present in df.
 
     Returns:
         The same DataFrame with new encoded columns added (e.g.,
@@ -53,7 +59,11 @@ def add_label_encoded_columns(
 
     for col in columns:
         # Get unique values and sort alphabetically for deterministic encoding
-        unique_values = df[col].dropna().unique()
+        if known_categories and col in known_categories:
+            unique_values = known_categories[col]
+        else:
+            unique_values = df[col].dropna().unique()
+
         sorted_values = sorted(unique_values, key=str)
 
         # Create mapping: value -> integer label

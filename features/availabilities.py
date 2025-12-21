@@ -336,14 +336,29 @@ def add_route_count_features(
         df["route_loo_mean"] = pd.Series(dtype="Float64")
         return df
 
-    # Route count: number of observations per route
-    route_counts = df.groupby(group_cols).size()
+    # Route count: number of valid (non-null) observations per route
+    # (Counts only historical data where outcome is known, ignoring future prediction rows)
+    route_counts = df.groupby(group_cols)[occurs_col].count()
     df["route_count"] = df.set_index(group_cols).index.map(route_counts).astype("Int64")
     df["route_count_log"] = np.log1p(df["route_count"].astype(float))
 
     # Leave-one-out mean encoding
+    # If occurs is known (history): (Sum - Val) / (Count - 1)
+    # If occurs is NaN (future): Sum / Count
     route_sums = df.groupby(group_cols)[occurs_col].transform("sum")
-    route_loo_mean = (route_sums - df[occurs_col]) / (df["route_count"] - 1)
+    
+    # Vectorized LOO logic:
+    # default numerator is sum
+    loo_numer = route_sums.copy()
+    # subtract current value where it exists
+    loo_numer = loo_numer - df[occurs_col].fillna(0)
+    
+    # default denominator is count
+    loo_denom = df["route_count"].astype(float).copy()
+    # subtract 1 where current value exists (it was included in count)
+    loo_denom = loo_denom - df[occurs_col].notna().astype(int)
+    
+    route_loo_mean = loo_numer / loo_denom
     global_mean = df[occurs_col].mean()
     df["route_loo_mean"] = route_loo_mean.fillna(global_mean).astype("Float64")
 
@@ -445,10 +460,19 @@ def add_route_availability_rate(
     df_sorted = df.loc[sorted_idx]
 
     # Cumulative rate (shifted to exclude current)
-    cumsum = df_sorted.groupby(group_cols, sort=False)[occurs_col].cumsum().shift(1)
-    cumcount = df_sorted.groupby(group_cols, sort=False).cumcount()
-    cumcount_shifted = cumcount.where(cumcount > 0, np.nan)
-    cum_rate = cumsum / cumcount_shifted
+    # Handle NaNs (future rows) by carrying forward the last known cumulative sum
+    # We want the running sum of *valid* observations.
+
+    # Grouping keys aligned with df_sorted
+    keys = [df_sorted[c] for c in group_cols]
+
+    valid_filled = df_sorted[occurs_col].fillna(0)
+    cumsum = valid_filled.groupby(keys, sort=False).cumsum().shift(1)
+    
+    valid_count = df_sorted[occurs_col].notna().astype(int)
+    cumcount = valid_count.groupby(keys, sort=False).cumsum().shift(1)
+
+    cum_rate = cumsum / cumcount.replace(0, np.nan)
 
     # Rolling rates
     rolling_7d = df_sorted.groupby(group_cols, sort=False, group_keys=False)[
@@ -507,10 +531,15 @@ def add_day_of_week_route_interaction(
     df_sorted = df.loc[sorted_idx]
 
     # Compute cumulative availability rate per route + day of week
-    cumsum = df_sorted.groupby(dow_group_cols, sort=False)[occurs_col].cumsum().shift(1)
-    cumcount = df_sorted.groupby(dow_group_cols, sort=False).cumcount()
-    cumcount_shifted = cumcount.where(cumcount > 0, np.nan)
-    dow_rate = cumsum / cumcount_shifted
+    keys = [df_sorted[c] for c in dow_group_cols]
+    
+    valid_filled = df_sorted[occurs_col].fillna(0)
+    cumsum = valid_filled.groupby(keys, sort=False).cumsum().shift(1)
+    
+    valid_count = df_sorted[occurs_col].notna().astype(int)
+    cumcount = valid_count.groupby(keys, sort=False).cumsum().shift(1)
+    
+    dow_rate = cumsum / cumcount.replace(0, np.nan)
 
     # Fill NaN with global day-of-week rate as fallback
     global_dow_rate = df.groupby("day_of_week")[occurs_col].transform("mean")
