@@ -39,6 +39,16 @@ def render_map_view(data):
 
         selected_date = st.date_input("Date", default_date)
 
+    min_probability = st.slider(
+        "Minimum probability",
+        min_value=0,
+        max_value=100,
+        value=40,
+        step=5,
+        help="Hide destinations with predicted probability below the selected threshold.",
+    )
+    min_probability_value = min_probability / 100
+
     if not selected_origins:
         st.info("Select at least one departure airport to compare.")
         return
@@ -50,9 +60,11 @@ def render_map_view(data):
         & (df_preds["availability_start"] == selected_date)
     ].copy()
 
+    filtered = filtered[filtered["predicted_probability"] >= min_probability_value]
+
     if filtered.empty:
         st.info(
-            f"No predictions found for {', '.join(selected_origins)} on {selected_date}."
+            f"No destinations meet the {min_probability}% threshold on {selected_date}."
         )
         return
 
@@ -68,9 +80,7 @@ def render_map_view(data):
     missing_coords = filtered[filtered["lat"].isna()]
     if not missing_coords.empty:
         missing_destinations = ", ".join(sorted(set(missing_coords["departure_to"])))
-        st.caption(
-            f"Missing coordinates for: {missing_destinations}"
-        )
+        st.caption(f"Missing coordinates for: {missing_destinations}")
 
     plot_data = filtered.dropna(subset=["lat", "lon"])
     if plot_data.empty:
@@ -161,7 +171,7 @@ def render_calendar_view(data):
             df_preds[["departure_from", "departure_to"]],
             df_hist[["departure_from", "departure_to"]],
         ],
-        ).drop_duplicates()
+    ).drop_duplicates()
 
     origins = sorted(set(all_routes["departure_from"]))
     col1, col2 = st.columns(2)
