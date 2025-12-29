@@ -16,33 +16,44 @@ def render_map_view(data):
         return
 
     # User inputs
-    origins = sorted(df_preds["departure_from"].unique())
+    origins = sorted(set(df_preds["departure_from"]))
     if not origins:
         st.warning("No origins found in predictions.")
         return
 
     col1, col2 = st.columns(2)
     with col1:
-        origin = st.selectbox("Departure", origins)
-
+        default_origins = ["Stockholm"] if "Stockholm" in origins else [origins[0]]
+        selected_origins = st.multiselect(
+            "Departures",
+            origins,
+            default=default_origins,
+            help="Compare multiple departure airports on the same map.",
+        )
     with col2:
         # Default to tomorrow or first available date in predictions
-        available_dates = sorted(df_preds["availability_start"].unique())
+        available_dates = sorted(set(df_preds["availability_start"]))
         default_date = date.today() + timedelta(days=1)
         if default_date not in available_dates and available_dates:
             default_date = available_dates[0]
 
         selected_date = st.date_input("Date", default_date)
 
+    if not selected_origins:
+        st.info("Select at least one departure airport to compare.")
+        return
+
     # Filter data
     # Ensure selected_date is compared correctly (it comes as date from st.date_input)
     filtered = df_preds[
-        (df_preds["departure_from"] == origin)
+        (df_preds["departure_from"].isin(selected_origins))
         & (df_preds["availability_start"] == selected_date)
     ].copy()
 
     if filtered.empty:
-        st.info(f"No predictions found from {origin} on {selected_date}.")
+        st.info(
+            f"No predictions found for {', '.join(selected_origins)} on {selected_date}."
+        )
         return
 
     # Add coordinates
@@ -56,33 +67,87 @@ def render_map_view(data):
     # Drop missing coords
     missing_coords = filtered[filtered["lat"].isna()]
     if not missing_coords.empty:
+        missing_destinations = ", ".join(sorted(set(missing_coords["departure_to"])))
         st.caption(
-            f"Missing coordinates for: {', '.join(missing_coords['departure_to'].unique())}"
+            f"Missing coordinates for: {missing_destinations}"
         )
 
     plot_data = filtered.dropna(subset=["lat", "lon"])
-
     if plot_data.empty:
         st.error("No valid destination coordinates found.")
         return
 
-    # Plot
+    # Plot destinations with probability gradient and origin symbols
     fig = px.scatter_mapbox(
         plot_data,
         lat="lat",
         lon="lon",
         hover_name="departure_to",
-        hover_data={"predicted_probability": ":.2f", "lat": False, "lon": False},
+        hover_data={
+            "predicted_probability": ":.2f",
+            "departure_from": True,
+            "lat": False,
+            "lon": False,
+        },
         color="predicted_probability",
         color_continuous_scale=["red", "yellow", "green"],
         range_color=[0, 1],
-        size_max=15,
+        size_max=16,
         zoom=3,
         mapbox_style="carto-positron",
     )
 
-    fig.update_layout(margin={"r": 0, "t": 0, "l": 0, "b": 0})
-    st.plotly_chart(fig, use_container_width=True)
+    origin_points = []
+    for airport in selected_origins:
+        lat, lon = AIRPORT_COORDINATES.get(airport, (None, None))
+        if lat is None or lon is None:
+            continue
+        origin_points.append({"departure_from": airport, "lat": lat, "lon": lon})
+
+    if origin_points:
+        origin_df = pd.DataFrame(origin_points)
+        fig.add_trace(
+            go.Scattermapbox(
+                lat=origin_df["lat"],
+                lon=origin_df["lon"],
+                mode="markers+text",
+                text=origin_df["departure_from"],
+                textposition="top center",
+                marker=dict(size=18, color="rgba(33, 150, 243, 0.85)"),
+                name="Departure airports",
+            )
+        )
+
+        fig.update_layout(
+            margin={"r": 0, "t": 0, "l": 0, "b": 0},
+            legend=dict(title="Departures"),
+            coloraxis_colorbar=dict(title="Probability"),
+        )
+
+        st.plotly_chart(fig, width="stretch")
+
+    summary = (
+        filtered.sort_values("predicted_probability", ascending=False)
+        .groupby("departure_from", group_keys=False)
+        .head(5)
+        .copy()
+    )
+
+    if not summary.empty:
+        summary["Probability"] = summary["predicted_probability"].map(
+            lambda val: f"{val:.0%}"
+        )
+        summary_display = summary[
+            ["departure_from", "departure_to", "Probability"]
+        ].rename(
+            columns={
+                "departure_from": "From",
+                "departure_to": "To",
+            }
+        )
+        st.subheader("Route comparison highlights")
+        st.dataframe(summary_display, use_container_width=True)
+        st.caption("Top 5 destinations per departure ordered by predicted probability.")
 
 
 def render_calendar_view(data):
@@ -95,18 +160,17 @@ def render_calendar_view(data):
         [
             df_preds[["departure_from", "departure_to"]],
             df_hist[["departure_from", "departure_to"]],
-        ]
-    ).drop_duplicates()
+        ],
+        ).drop_duplicates()
 
-    origins = sorted(all_routes["departure_from"].unique())
-
+    origins = sorted(set(all_routes["departure_from"]))
     col1, col2 = st.columns(2)
     with col1:
         origin = st.selectbox("Departure", origins, key="cal_origin")
 
     # Filter destinations based on origin
     destinations = sorted(
-        all_routes[all_routes["departure_from"] == origin]["departure_to"].unique()
+        set(all_routes[all_routes["departure_from"] == origin]["departure_to"])
     )
     with col2:
         destination = st.selectbox("Destination", destinations, key="cal_dest")
@@ -147,11 +211,8 @@ def render_calendar_view(data):
     # Or just show the 60-day window as a continuous stream?
     # A simple timeline heatmap is effective:
     # X = Date, Y = "Availability"
-
     # Let's do a Heatmap Calendar: X=Day, Y=Month
-
     grid_data = []
-
     # Fill history
     for _, row in hist_route.iterrows():
         grid_data.append(
@@ -188,11 +249,10 @@ def render_calendar_view(data):
     # Sort by type (History first?) No, just drop duplicates on date.
     # Actually, if we have both, it's interesting. But for now, let's just keep one.
     # History usually implies we know the truth.
-    df_grid["type_rank"] = df_grid["type"].map({"History": 1, "Prediction": 2})
+    df_grid["type_rank"] = df_grid["type"].replace({"History": 1, "Prediction": 2})
     df_grid = df_grid.sort_values("type_rank").drop_duplicates(
         subset=["date"], keep="first"
     )
-
     # Visualization
     # Create a unified timeline
     df_grid["day_of_week"] = df_grid["date"].apply(
@@ -212,8 +272,6 @@ def render_calendar_view(data):
     # X: Day of Week (ordered)
     # Y: Week ID (ordered desc)
 
-    days_order = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-
     fig = go.Figure(
         data=go.Heatmap(
             x=df_grid["day_of_week"],
@@ -229,6 +287,7 @@ def render_calendar_view(data):
         )
     )
 
+    days_order = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     fig.update_xaxes(categoryorder="array", categoryarray=days_order)
     fig.update_yaxes(
         autorange="reversed"
@@ -244,8 +303,7 @@ def render_calendar_view(data):
         height=400,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
-
+    st.plotly_chart(fig, width="stretch")
     # Legend/Key
     st.caption(
         "Green: High Probability / Available. Red: Low Probability. Cells show prediction %."
