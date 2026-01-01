@@ -3,7 +3,40 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import date, timedelta
+from streamlit_calendar import calendar
 from features.airports import AIRPORT_COORDINATES
+
+
+def get_color_for_probability(prob: float) -> str:
+    """Generate a hex color code for a probability value (0-1).
+
+    Uses a red-yellow-green gradient where:
+    - 0.0 = Red (#dc3545)
+    - 0.5 = Yellow (#ffc107)
+    - 1.0 = Green (#28a745)
+
+    Args:
+        prob: Probability value between 0 and 1.
+
+    Returns:
+        Hex color code string.
+    """
+    prob = max(0.0, min(1.0, prob))
+
+    if prob < 0.5:
+        # Interpolate between red and yellow
+        t = prob * 2
+        r = int(220 + (255 - 220) * t)
+        g = int(53 + (193 - 53) * t)
+        b = int(69 + (7 - 69) * t)
+    else:
+        # Interpolate between yellow and green
+        t = (prob - 0.5) * 2
+        r = int(255 + (40 - 255) * t)
+        g = int(193 + (167 - 193) * t)
+        b = int(7 + (69 - 7) * t)
+
+    return f"#{r:02x}{g:02x}{b:02x}"
 
 
 def render_map_view(data):
@@ -185,12 +218,6 @@ def render_calendar_view(data):
     with col2:
         destination = st.selectbox("Destination", destinations, key="cal_dest")
 
-    # Prepare data for grid
-    # Combine history and predictions
-    # History: is_available (True) -> 1.0 probability (conceptually) or distinct marker?
-    # Actually, history is boolean. Predictions are float.
-    # We can create a "score" column.
-
     hist_route = df_hist[
         (df_hist["departure_from"] == origin) & (df_hist["departure_to"] == destination)
     ].copy()
@@ -200,7 +227,6 @@ def render_calendar_view(data):
         & (df_preds["departure_to"] == destination)
     ].copy()
 
-    # Create a full date range to display (e.g. min to max available in loaded data)
     dates_hist = hist_route["availability_start"].tolist()
     dates_pred = pred_route["availability_start"].tolist()
 
@@ -208,113 +234,72 @@ def render_calendar_view(data):
         st.info("No data available for this route.")
         return
 
-    all_dates = sorted(set(dates_hist + dates_pred))
-    min_date = min(all_dates)
-    max_date = max(all_dates)
+    # Build calendar events
+    events = []
+    seen_dates = set()
 
-    # Create calendar grid dataframe
-    # We want rows = weeks, cols = days (Mon-Sun)
-    # But filtering by month is better.
-
-    current_month = date.today().replace(day=1)
-    # Show current month and next month?
-    # Or just show the 60-day window as a continuous stream?
-    # A simple timeline heatmap is effective:
-    # X = Date, Y = "Availability"
-    # Let's do a Heatmap Calendar: X=Day, Y=Month
-    grid_data = []
-    # Fill history
+    # Add history events (these take priority)
     for _, row in hist_route.iterrows():
-        grid_data.append(
+        event_date = row["availability_start"]
+        if event_date in seen_dates:
+            continue
+        seen_dates.add(event_date)
+
+        is_available = row.get("is_available", True)
+        events.append(
             {
-                "date": row["availability_start"],
-                "type": "History",
-                "score": 1.0
-                if row["is_available"]
-                else 0.0,  # Availabilities table only has available rows usually
-                "label": "Available",
+                "title": "Available" if is_available else "Unavailable",
+                "start": event_date.isoformat(),
+                "end": event_date.isoformat(),
+                "backgroundColor": "#28a745" if is_available else "#dc3545",
+                "borderColor": "#28a745" if is_available else "#dc3545",
             }
         )
 
-    # Fill predictions
+    # Add prediction events
     for _, row in pred_route.iterrows():
-        # If date overlaps with history (unlikely if 'data_generated' is recent, but possible), history should win?
-        # Usually predictions are for future.
-        grid_data.append(
+        event_date = row["availability_start"]
+        if event_date in seen_dates:
+            continue
+        seen_dates.add(event_date)
+
+        prob = row["predicted_probability"]
+        color = get_color_for_probability(prob)
+        events.append(
             {
-                "date": row["availability_start"],
-                "type": "Prediction",
-                "score": row["predicted_probability"],
-                "label": f"{row['predicted_probability']:.0%}",
+                "title": f"{prob:.0%}",
+                "start": event_date.isoformat(),
+                "end": event_date.isoformat(),
+                "backgroundColor": color,
+                "borderColor": color,
             }
         )
 
-    df_grid = pd.DataFrame(grid_data)
-
-    if df_grid.empty:
+    if not events:
         st.write("No data.")
         return
 
-    # Remove duplicates (prefer History over Prediction if same date)
-    # Sort by type (History first?) No, just drop duplicates on date.
-    # Actually, if we have both, it's interesting. But for now, let's just keep one.
-    # History usually implies we know the truth.
-    df_grid["type_rank"] = df_grid["type"].replace({"History": 1, "Prediction": 2})
-    df_grid = df_grid.sort_values("type_rank").drop_duplicates(
-        subset=["date"], keep="first"
-    )
-    # Visualization
-    # Create a unified timeline
-    df_grid["day_of_week"] = df_grid["date"].apply(
-        lambda d: d.strftime("%a")
-    )  # Mon, Tue...
-    df_grid["week_of_year"] = df_grid["date"].apply(lambda d: d.isocalendar()[1])
-    df_grid["iso_year"] = df_grid["date"].apply(lambda d: d.isocalendar()[0])
-    # Create a unique Y axis identifier for the week (Year-Week)
-    df_grid["week_id"] = df_grid.apply(
-        lambda r: f"{r['iso_year']}-W{r['week_of_year']:02d}", axis=1
-    )
+    # Determine initial date for calendar view
+    all_dates = sorted(seen_dates)
+    initial_date = date.today().isoformat()
+    if all_dates:
+        initial_date = min(all_dates).isoformat()
 
-    # Sort dates
-    df_grid = df_grid.sort_values("date")
+    calendar_options = {
+        "initialView": "dayGridMonth",
+        "initialDate": initial_date,
+        "headerToolbar": {
+            "left": "prev,next today",
+            "center": "title",
+            "right": "",
+        },
+        "firstDay": 1,  # Monday
+        "height": 500,
+    }
 
-    # Plotly Heatmap
-    # X: Day of Week (ordered)
-    # Y: Week ID (ordered desc)
+    calendar(events=events, options=calendar_options, key="availability_calendar")
 
-    fig = go.Figure(
-        data=go.Heatmap(
-            x=df_grid["day_of_week"],
-            y=df_grid["week_id"],
-            z=df_grid["score"],
-            text=df_grid["label"],
-            hoverongaps=False,
-            colorscale=["red", "yellow", "green"],
-            zmin=0,
-            zmax=1,
-            xgap=2,
-            ygap=2,
-        )
-    )
-
-    days_order = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    fig.update_xaxes(categoryorder="array", categoryarray=days_order)
-    fig.update_yaxes(
-        autorange="reversed"
-    )  # Latest weeks at bottom usually, but standard calendar is top-down.
-    # Standard calendar: Earlier dates at top. So 'reversed' implies descending order of Y?
-    # Y axis strings sort alphanumerically: 2025-W01, 2025-W02.
-    # Reversed means W02 is below W01. That's correct for a calendar.
-
-    fig.update_layout(
-        title=f"{origin} to {destination}",
-        xaxis_title="Day of Week",
-        yaxis_title="Week",
-        height=400,
-    )
-
-    st.plotly_chart(fig, width="stretch")
-    # Legend/Key
     st.caption(
-        "Green: High Probability / Available. Red: Low Probability. Cells show prediction %."
+        "Green: Available / High probability. Yellow: Medium probability. "
+        "Red: Low probability. Past dates show actual availability."
     )
