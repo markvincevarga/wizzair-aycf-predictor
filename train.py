@@ -136,6 +136,7 @@ def train_model(
     print(classification_report(y_test, y_pred, target_names=["Not Available", "Available"]))
 
     # Save the trained model
+    config.ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     model_path = config.ARTIFACTS_DIR / "xgboost_classifier.joblib"
     joblib.dump(xgb_classifier, model_path)
     print(f"\nModel saved to: {model_path}")

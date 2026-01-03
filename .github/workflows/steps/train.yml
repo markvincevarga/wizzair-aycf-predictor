@@ -1,14 +1,23 @@
 name: Train Model
 
 on:
-  schedule:
-    - cron: '15 6 * * *'  # Run at 6:15 AM UTC daily
-  workflow_dispatch:  # Allow manual triggering
+  workflow_call:
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: true
+      AWS_ENDPOINT_URL_S3:
+        required: true
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      BUCKET_NAME:
+        required: true
 
 jobs:
   train:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v6
@@ -35,3 +44,4 @@ jobs:
         BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
       run: |
         uv run train.py --db wizz-aycf --bucket $BUCKET_NAME
+

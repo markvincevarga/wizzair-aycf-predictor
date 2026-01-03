@@ -1,0 +1,41 @@
+name: Daily Pipeline
+
+on:
+  schedule:
+    - cron: '15 11 * * *' 
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Number of days to predict'
+        required: false
+        default: 30
+        type: number
+
+jobs:
+  fill:
+    uses: ./.github/workflows/steps/fill.yml
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+  train:
+    needs: fill
+    uses: ./.github/workflows/steps/train.yml
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      AWS_ENDPOINT_URL_S3: ${{ secrets.AWS_ENDPOINT_URL_S3 }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
+
+  predict:
+    needs: train
+    uses: ./.github/workflows/steps/predict.yml
+    with:
+      days: ${{ inputs.days || 30 }}
+      upload: true
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      AWS_ENDPOINT_URL_S3: ${{ secrets.AWS_ENDPOINT_URL_S3 }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
