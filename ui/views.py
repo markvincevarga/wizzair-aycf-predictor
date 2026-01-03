@@ -303,3 +303,221 @@ def render_calendar_view(data):
         "Green: Available / High probability. Yellow: Medium probability. "
         "Red: Low probability. Past dates show actual availability."
     )
+
+
+def render_performance_view(db):
+    """Render the performance view showing prediction metrics over time.
+    
+    Args:
+        db: DatabaseWrapper instance for fetching data.
+    """
+    from storage.predictions import Predictions
+    from storage.availabilities import Availabilities
+    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+    
+    st.header("Performance")
+    st.caption("Prediction performance analysis over the last 30 days")
+    
+    # Define date range
+    today = date.today()
+    start_date = today - timedelta(days=30)
+    end_date = today - timedelta(days=1)  # Yesterday, since we need actual outcomes
+    
+    preds_repo = Predictions(db)
+    avail_repo = Availabilities(db)
+    
+    # Fetch all predictions for targets in the date range (without deduplication)
+    df_preds = preds_repo.get_all_predictions_for_target_range(start_date, end_date)
+    
+    # Fetch actual availabilities for the date range
+    df_avail = avail_repo.get_recent_availabilities(start_date, end_date)
+    
+    if df_preds.empty:
+        st.warning("No prediction data available for the last 30 days.")
+        return
+        
+    if df_avail.empty:
+        st.warning("No availability data available for the last 30 days.")
+        return
+    
+    # Check for required column
+    if 'predicted_available' not in df_preds.columns:
+        st.error(f"Missing 'predicted_available' column. Available columns: {list(df_preds.columns)}")
+        return
+    
+    df_preds = df_preds.copy()
+    df_avail = df_avail.copy()
+    
+    # Optional filters for departure and destination
+    all_departures = sorted(df_preds['departure_from'].unique())
+    all_destinations = sorted(df_preds['departure_to'].unique())
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        selected_departure = st.selectbox(
+            "Filter by departure",
+            options=["All"] + all_departures,
+            index=0,
+            key="performance_departure"
+        )
+    with col2:
+        # Filter destination options based on selected departure
+        if selected_departure != "All":
+            available_destinations = sorted(
+                df_preds[df_preds['departure_from'] == selected_departure]['departure_to'].unique()
+            )
+        else:
+            available_destinations = all_destinations
+        
+        selected_destination = st.selectbox(
+            "Filter by destination",
+            options=["All"] + available_destinations,
+            index=0,
+            key="performance_destination"
+        )
+    
+    # Apply filters
+    if selected_departure != "All":
+        df_preds = df_preds[df_preds['departure_from'] == selected_departure]
+        df_avail = df_avail[df_avail['departure_from'] == selected_departure]
+    
+    if selected_destination != "All":
+        df_preds = df_preds[df_preds['departure_to'] == selected_destination]
+        df_avail = df_avail[df_avail['departure_to'] == selected_destination]
+    
+    if df_preds.empty:
+        st.warning("No prediction data for the selected filters.")
+        return
+    
+    # For actuals lookup, we need date-level granularity (availabilities are per-day)
+    df_preds['target_date'] = df_preds['availability_start'].dt.date
+    df_avail['target_date'] = df_avail['availability_start'].dt.date
+    
+    # Calculate lag as precise timedelta, then convert to fractional days
+    # availability_start is the event datetime, prediction_time is when prediction was made
+    df_preds['lag_timedelta'] = df_preds['availability_start'] - df_preds['prediction_time']
+    df_preds['lag_days_exact'] = df_preds['lag_timedelta'].dt.total_seconds() / (24 * 3600)
+    
+    # Integer lag days for grouping metrics
+    df_preds['lag_days'] = df_preds['lag_days_exact'].apply(lambda x: int(x))
+    
+    # Filter out predictions made after the event (lag < 0)
+    df_preds = df_preds[df_preds['lag_days_exact'] >= 0]
+    
+    if df_preds.empty:
+        st.warning("No valid predictions found (all predictions were made after their target dates).")
+        return
+    
+    # Create actual outcome lookup: 1 if flight was available, 0 otherwise
+    # Create actuals set for fast lookup
+    actuals_set = set(
+        zip(df_avail['departure_from'], df_avail['departure_to'], df_avail['target_date'])
+    )
+    
+    # Add actual outcome to predictions
+    df_preds['actual'] = df_preds.apply(
+        lambda row: 1 if (row['departure_from'], row['departure_to'], row['target_date']) in actuals_set else 0,
+        axis=1
+    )
+    
+    # Use the binary prediction directly (predicted_available is already 0 or 1)
+    df_preds['predicted'] = df_preds['predicted_available'].astype(int)
+    
+    # Group by lag_days and calculate metrics
+    lag_days_range = sorted(df_preds['lag_days'].unique())
+    
+    metrics_data = []
+    for lag in lag_days_range:
+        subset = df_preds[df_preds['lag_days'] == lag]
+        if len(subset) < 10:  # Skip if too few samples
+            continue
+            
+        y_true = subset['actual']
+        y_pred = subset['predicted']
+        
+        # Calculate metrics (handle edge cases)
+        acc = accuracy_score(y_true, y_pred)
+        
+        # Precision/Recall/F1 need at least one positive prediction or actual
+        if y_pred.sum() == 0 and y_true.sum() == 0:
+            prec, rec, f1 = 1.0, 1.0, 1.0
+        elif y_pred.sum() == 0:
+            prec, rec, f1 = 0.0, 0.0, 0.0
+        else:
+            prec = precision_score(y_true, y_pred, zero_division=0)
+            rec = recall_score(y_true, y_pred, zero_division=0)
+            f1 = f1_score(y_true, y_pred, zero_division=0)
+        
+        metrics_data.append({
+            'lag_days': lag,
+            'accuracy': acc,
+            'precision': prec,
+            'recall': rec,
+            'f1_score': f1,
+            'n_samples': len(subset)
+        })
+    
+    if not metrics_data:
+        st.warning("Not enough data to calculate metrics (need at least 10 samples per lag day).")
+        return
+    
+    df_metrics = pd.DataFrame(metrics_data)
+    
+    # Display summary statistics
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Avg Accuracy", f"{df_metrics['accuracy'].mean():.1%}")
+    with col2:
+        st.metric("Avg Precision", f"{df_metrics['precision'].mean():.1%}")
+    with col3:
+        st.metric("Avg Recall", f"{df_metrics['recall'].mean():.1%}")
+    with col4:
+        st.metric("Avg F1 Score", f"{df_metrics['f1_score'].mean():.1%}")
+    
+    # All metrics combined chart
+    st.subheader("All Metrics by Prediction Lead Time")
+    df_melted = df_metrics.melt(
+        id_vars=['lag_days', 'n_samples'],
+        value_vars=['accuracy', 'precision', 'recall', 'f1_score'],
+        var_name='Metric',
+        value_name='Value'
+    )
+    fig_combined = px.line(
+        df_melted,
+        x='lag_days',
+        y='Value',
+        color='Metric',
+        markers=True,
+        labels={'lag_days': 'Days Before Event', 'Value': 'Score'},
+    )
+    fig_combined.update_layout(
+        yaxis_range=[0, 1],
+        xaxis_title="Days Before Event",
+        yaxis_title="Score",
+        legend_title="Metric",
+    )
+    st.plotly_chart(fig_combined, use_container_width=True)
+    
+    # Show sample counts
+    st.subheader("Sample Count by Lead Time")
+    fig_samples = px.bar(
+        df_metrics,
+        x='lag_days',
+        y='n_samples',
+        labels={'lag_days': 'Days Before Event', 'n_samples': 'Number of Predictions'},
+    )
+    fig_samples.update_layout(
+        xaxis_title="Days Before Event",
+        yaxis_title="Number of Predictions",
+    )
+    st.plotly_chart(fig_samples, use_container_width=True)
+    
+    # Show raw data table
+    with st.expander("View detailed metrics table"):
+        display_df = df_metrics.copy()
+        display_df['accuracy'] = display_df['accuracy'].map(lambda x: f"{x:.1%}")
+        display_df['precision'] = display_df['precision'].map(lambda x: f"{x:.1%}")
+        display_df['recall'] = display_df['recall'].map(lambda x: f"{x:.1%}")
+        display_df['f1_score'] = display_df['f1_score'].map(lambda x: f"{x:.1%}")
+        display_df.columns = ['Lead Time (Days)', 'Accuracy', 'Precision', 'Recall', 'F1 Score', 'Samples']
+        st.dataframe(display_df, use_container_width=True)

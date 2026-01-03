@@ -5,8 +5,8 @@ import os
 # Ensure project root is in path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from ui.utils import load_data
-from ui.views import render_map_view, render_calendar_view
+from ui.utils import load_data, get_db
+from ui.views import render_map_view, render_calendar_view, render_performance_view
 
 st.set_page_config(
     page_title="WizzAir AYCF Predictor",
@@ -22,12 +22,14 @@ with st.spinner("Loading recent flight data..."):
 
 # Sidebar
 st.sidebar.title("Navigation")
-view_option = st.sidebar.radio("Go to", ["Where to? (Map)", "When? (Calendar)"])
+view_option = st.sidebar.radio("Go to", ["Where to? (Map)", "When? (Calendar)", "Performance"])
 
 if view_option == "Where to? (Map)":
     render_map_view(data)
 elif view_option == "When? (Calendar)":
     render_calendar_view(data)
+elif view_option == "Performance":
+    render_performance_view(get_db())
 
 st.sidebar.markdown("---")
 st.sidebar.info(

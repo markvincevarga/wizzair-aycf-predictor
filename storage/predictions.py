@@ -91,3 +91,38 @@ class Predictions:
         
         # Return relevant columns
         return df[['departure_from', 'departure_to', 'availability_start', 'predicted_probability', 'predicted_available']]
+
+    def get_all_predictions_for_target_range(self, start_date: date, end_date: date) -> pd.DataFrame:
+        """
+        Get all predictions (without deduplication) for targets within a specific date range.
+        
+        Args:
+            start_date: Start date of the target range (inclusive).
+            end_date: End date of the target range (inclusive).
+            
+        Returns:
+            DataFrame with columns [departure_from, departure_to, availability_start, 
+            prediction_time, predicted_available].
+        """
+        start_ts = datetime.combine(start_date, time.min).timestamp()
+        end_ts = datetime.combine(end_date, time.max).timestamp()
+        
+        sql = """
+        SELECT departure_from, departure_to, availability_start, prediction_time, predicted_available
+        FROM predictions
+        WHERE availability_start >= ? AND availability_start <= ?
+        """
+        
+        df = self.db.query(sql, [str(start_ts), str(end_ts)])
+        
+        if df.empty:
+            return pd.DataFrame(columns=[
+                'departure_from', 'departure_to', 'availability_start', 
+                'prediction_time', 'predicted_available'
+            ])
+            
+        # Convert timestamps back to datetime
+        df['availability_start'] = pd.to_datetime(df['availability_start'], unit='s')
+        df['prediction_time'] = pd.to_datetime(df['prediction_time'], unit='s')
+        
+        return df
