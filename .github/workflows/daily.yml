@@ -2,24 +2,24 @@ name: Daily Pipeline
 
 on:
   schedule:
-    - cron: '15 11 * * *' 
+    - cron: "15 11 * * *"
   workflow_dispatch:
     inputs:
       days:
-        description: 'Number of days to predict'
+        description: "Number of days to predict"
         required: false
         default: 30
         type: number
 
 jobs:
   fill:
-    uses: ./.github/workflows/steps/fill.yml
+    uses: ./.github/workflows/step-fill.yml
     secrets:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
   train:
     needs: fill
-    uses: ./.github/workflows/steps/train.yml
+    uses: ./.github/workflows/step-train.yml
     secrets:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       AWS_ENDPOINT_URL_S3: ${{ secrets.AWS_ENDPOINT_URL_S3 }}
@@ -29,9 +29,9 @@ jobs:
 
   predict:
     needs: train
-    uses: ./.github/workflows/steps/predict.yml
+    uses: ./.github/workflows/step-predict.yml
     with:
-      days: ${{ inputs.days || 30 }}
+      days: ${{ fromJSON(github.event.inputs.days || '30') }}
       upload: true
     secrets:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
