@@ -58,7 +58,7 @@ def render_map_view(data):
     with col1:
         default_origins = ["Stockholm"] if "Stockholm" in origins else [origins[0]]
         selected_origins = st.multiselect(
-            "Departures",
+            "Leaving from",
             origins,
             default=default_origins,
             help="Compare multiple departure airports on the same map.",
