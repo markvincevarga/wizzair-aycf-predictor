@@ -169,10 +169,12 @@ def render_map_view(data):
 
         st.plotly_chart(fig, width="stretch")
 
+    st.subheader("Route comparison highlights")
+
     summary = (
         filtered.sort_values("predicted_probability", ascending=False)
         .groupby("departure_from", group_keys=False)
-        .head(5)
+        .head(50)
         .copy()
     )
 
@@ -188,9 +190,8 @@ def render_map_view(data):
                 "departure_to": "To",
             }
         )
-        st.subheader("Route comparison highlights")
-        st.dataframe(summary_display, use_container_width=True)
-        st.caption("Top 5 destinations per departure ordered by predicted probability.")
+        st.dataframe(summary_display, use_container_width=True, height=400)
+        st.caption("Top 50 destinations per departure ordered by predicted probability.")
 
 
 def render_calendar_view(data):
