@@ -102,13 +102,13 @@ class Predictions:
             
         Returns:
             DataFrame with columns [departure_from, departure_to, availability_start, 
-            prediction_time, predicted_available].
+            prediction_time, predicted_available, predicted_probability].
         """
         start_ts = datetime.combine(start_date, time.min).timestamp()
         end_ts = datetime.combine(end_date, time.max).timestamp()
         
         sql = """
-        SELECT departure_from, departure_to, availability_start, prediction_time, predicted_available
+        SELECT departure_from, departure_to, availability_start, prediction_time, predicted_available, predicted_probability
         FROM predictions
         WHERE availability_start >= ? AND availability_start <= ?
         """
@@ -118,7 +118,7 @@ class Predictions:
         if df.empty:
             return pd.DataFrame(columns=[
                 'departure_from', 'departure_to', 'availability_start', 
-                'prediction_time', 'predicted_available'
+                'prediction_time', 'predicted_available', 'predicted_probability'
             ])
             
         # Convert timestamps back to datetime

@@ -345,6 +345,10 @@ def render_performance_view(db):
     if 'predicted_available' not in df_preds.columns:
         st.error(f"Missing 'predicted_available' column. Available columns: {list(df_preds.columns)}")
         return
+
+    if 'predicted_probability' not in df_preds.columns:
+        st.error(f"Missing 'predicted_probability' column. Available columns: {list(df_preds.columns)}")
+        return
     
     df_preds = df_preds.copy()
     df_avail = df_avail.copy()
@@ -376,6 +380,16 @@ def render_performance_view(db):
             index=0,
             key="performance_destination"
         )
+
+    threshold = st.slider(
+        "Confidence Threshold (%)",
+        min_value=0,
+        max_value=100,
+        value=99,
+        step=1,
+        help="Minimum confidence to consider a flight available. Flights below this threshold are considered unavailable.",
+        key="performance_threshold"
+    ) / 100.0
     
     # Apply filters
     if selected_departure != "All":
@@ -421,8 +435,9 @@ def render_performance_view(db):
         axis=1
     )
     
-    # Use the binary prediction directly (predicted_available is already 0 or 1)
-    df_preds['predicted'] = df_preds['predicted_available'].astype(int)
+    # Use probability threshold for prediction
+    # If probability >= threshold, predict 1 (Available), else 0 (Unavailable)
+    df_preds['predicted'] = (df_preds['predicted_probability'] >= threshold).astype(int)
     
     # Group by lag_days and calculate metrics
     lag_days_range = sorted(df_preds['lag_days'].unique())
