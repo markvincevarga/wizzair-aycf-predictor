@@ -24,6 +24,7 @@ and the predictions
 - Model Store: S3 bucket storing the model weights
 - UI (in the `docs/` directory): presents the predictions
 
+![architecture.png](https://github.com/user-attachments/assets/5416fcb1-20c0-410b-95df-a87ae8ba60c3)
 ### Runbook Steps
 
 All steps below require the following environment variables set:
