@@ -12,7 +12,8 @@ from sklearn.metrics import (
     confusion_matrix,
     classification_report,
 )
-import data.training
+from storage.database import DatabaseWrapper
+from storage.availabilities import Availabilities
 from train import train_model
 from predict import generate_predictions
 from pathlib import Path
@@ -80,33 +81,45 @@ def run_backtest(
             print("Predictions file is empty. Skipping this date.")
             continue
 
-        # Load ground truth
-        print("Loading ground truth data...")
-        ground_truth_df = data.training.get(db_name=db_name, force_rebuild=False)
-
-        # Prepare for merge
-        # Ensure date columns are datetime for correct merging
-        preds_df["availability_start"] = pd.to_datetime(preds_df["availability_start"])
-        ground_truth_df["availability_start"] = pd.to_datetime(ground_truth_df["availability_start"])
-
-        # Filter ground truth to relevant dates/routes
-        # We only care about rows that exist in the prediction set
-        # Merge on keys
-        merge_keys = ["departure_from", "departure_to", "availability_start"]
+        # Load ground truth from raw availabilities (same approach as UI performance view)
+        print("Loading ground truth from availabilities...")
+        db = DatabaseWrapper(database_name=db_name)
+        avail_repo = Availabilities(db)
         
-        print("Merging predictions with ground truth...")
-        comparison_df = pd.merge(
-            preds_df, 
-            ground_truth_df[merge_keys + ["occurs"]], 
-            on=merge_keys, 
-            how="inner",
-            suffixes=("_pred", "_true")
+        # Parse prediction date range
+        preds_df["availability_start"] = pd.to_datetime(preds_df["availability_start"])
+        pred_start = preds_df["availability_start"].min().date()
+        pred_end = preds_df["availability_start"].max().date()
+        
+        # Fetch actual availabilities for the prediction date range
+        df_avail = avail_repo.get_recent_availabilities(pred_start, pred_end)
+        
+        if df_avail.empty:
+            print(f"Warning: No availability data found for {pred_start} to {pred_end}.")
+            continue
+        
+        # Create date column for lookup (matching UI approach)
+        preds_df["target_date"] = preds_df["availability_start"].dt.date
+        df_avail["target_date"] = df_avail["availability_start"].dt.date
+        
+        # Create actuals set for fast lookup (same as UI)
+        actuals_set = set(
+            zip(df_avail["departure_from"], df_avail["departure_to"], df_avail["target_date"])
         )
         
+        print(f"Found {len(actuals_set)} unique available route-date combinations.")
+        
+        # Add actual outcome to predictions (same logic as UI)
+        # If (route, date) is in actuals_set -> 1 (Available), else -> 0 (Unavailable)
+        preds_df["occurs"] = preds_df.apply(
+            lambda row: 1 if (row["departure_from"], row["departure_to"], row["target_date"]) in actuals_set else 0,
+            axis=1
+        )
+        
+        comparison_df = preds_df.copy()
+        
         if comparison_df.empty:
-            print("Warning: No overlapping records found between predictions and ground truth.")
-            print("Predictions range:", preds_df["availability_start"].min(), "to", preds_df["availability_start"].max())
-            print("Ground truth range:", ground_truth_df["availability_start"].min(), "to", ground_truth_df["availability_start"].max())
+            print("Warning: No valid records found.")
             continue
 
         # Calculate metrics
