@@ -3,17 +3,8 @@ import json
 import pandas as pd
 import typer
 from typing import List, Dict, Any, Optional, Callable
-from sklearn.metrics import (
-    accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    roc_auc_score,
-    confusion_matrix,
-    classification_report,
-)
-from storage.database import DatabaseWrapper
-from storage.availabilities import Availabilities
+from sklearn.metrics import confusion_matrix, classification_report
+from data.evaluation import evaluate_predictions, compute_metrics
 from train import train_model
 from predict import generate_predictions
 from pathlib import Path
@@ -81,71 +72,28 @@ def run_backtest(
             print("Predictions file is empty. Skipping this date.")
             continue
 
-        # Load ground truth from raw availabilities (same approach as UI performance view)
-        print("Loading ground truth from availabilities...")
-        db = DatabaseWrapper(database_name=db_name)
-        avail_repo = Availabilities(db)
-        
-        # Parse prediction date range
-        preds_df["availability_start"] = pd.to_datetime(preds_df["availability_start"])
-        pred_start = preds_df["availability_start"].min().date()
-        pred_end = preds_df["availability_start"].max().date()
-        
-        # Fetch actual availabilities for the prediction date range
-        df_avail = avail_repo.get_recent_availabilities(pred_start, pred_end)
-        
-        if df_avail.empty:
-            print(f"Warning: No availability data found for {pred_start} to {pred_end}.")
-            continue
-        
-        # Create date column for lookup (matching UI approach)
-        preds_df["target_date"] = preds_df["availability_start"].dt.date
-        df_avail["target_date"] = df_avail["availability_start"].dt.date
-        
-        # Create actuals set for fast lookup (same as UI)
-        actuals_set = set(
-            zip(df_avail["departure_from"], df_avail["departure_to"], df_avail["target_date"])
-        )
-        
-        print(f"Found {len(actuals_set)} unique available route-date combinations.")
-        
-        # Add actual outcome to predictions (same logic as UI)
-        # If (route, date) is in actuals_set -> 1 (Available), else -> 0 (Unavailable)
-        preds_df["occurs"] = preds_df.apply(
-            lambda row: 1 if (row["departure_from"], row["departure_to"], row["target_date"]) in actuals_set else 0,
-            axis=1
-        )
-        
-        comparison_df = preds_df.copy()
+        # Evaluate predictions against actual availability data
+        print("Evaluating predictions against actual availability data...")
+        comparison_df = evaluate_predictions(preds_df, db_name)
         
         if comparison_df.empty:
             print("Warning: No valid records found.")
             continue
 
         # Calculate metrics
+        metrics = compute_metrics(comparison_df)
+        metrics["cutoff_date"] = cutoff_date
+        results.append(metrics)
+        
+        # Extract values for display
+        accuracy = metrics["accuracy"]
+        precision = metrics["precision"]
+        recall = metrics["recall"]
+        f1 = metrics["f1"]
+        roc_auc = metrics["auc_roc"]
+        
         y_true = comparison_df["occurs"].astype(int)
         y_pred = comparison_df["predicted_available"].astype(int)
-        y_prob = comparison_df["predicted_probability"]
-
-        accuracy = accuracy_score(y_true, y_pred)
-        precision = precision_score(y_true, y_pred, zero_division=0)
-        recall = recall_score(y_true, y_pred, zero_division=0)
-        f1 = f1_score(y_true, y_pred, zero_division=0)
-        try:
-            roc_auc = roc_auc_score(y_true, y_prob)
-        except ValueError:
-            roc_auc = 0.0  # Handle case with single class
-
-        metrics = {
-            "cutoff_date": cutoff_date,
-            "accuracy": accuracy,
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-            "auc_roc": roc_auc,
-            "samples": len(comparison_df)
-        }
-        results.append(metrics)
 
         print("\n" + "-"*30)
         print(f"   RESULTS FOR {cutoff_date}")
